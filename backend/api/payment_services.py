@@ -1,6 +1,6 @@
 import secrets
 from datetime import timedelta
-from decimal import Decimal
+from decimal import Decimal, InvalidOperation
 
 import requests
 from django.conf import settings
@@ -14,9 +14,11 @@ FLUTTERWAVE_BASE_URL = "https://api.flutterwave.com/v3"
 
 
 def flutterwave_headers():
-    secret = getattr(settings, "FLW_SECRET_KEY", "",).strip()
-    if not secret:
-        raise RuntimeError("FLW_SECRET_KEY is not configured.")
+    secret = getattr(
+        settings,
+        "FLW_SECRET_KEY",
+        "",
+    ).strip()
 
     if not secret:
         raise RuntimeError(
@@ -28,7 +30,6 @@ def flutterwave_headers():
         "Content-Type": "application/json",
         "Accept": "application/json",
     }
-
 
 def plan_amount(plan, billing_cycle):
     subscription = Subscription.PLAN_PRICES.get(plan)
@@ -125,11 +126,16 @@ def create_flutterwave_checkout(
 
     return tx_ref, amount, data["data"]["link"]
 
-
 def verify_flutterwave_transaction(transaction_id):
     """
-        Verify a Flutterwave transaction by transaction ID.
+    Verify a Flutterwave transaction by transaction ID.
     """
+
+    if not transaction_id:
+        raise ValueError(
+            "Flutterwave transaction ID is required."
+        )
+
     response = requests.get(
         f"{FLUTTERWAVE_BASE_URL}/transactions/"
         f"{transaction_id}/verify",
@@ -152,12 +158,29 @@ def verify_flutterwave_transaction(transaction_id):
 
     if data.get("status") != "success":
         raise RuntimeError(
-            data.get("message") or "Transaction verification failed."
+            data.get("message")
+            or "Transaction verification failed."
         )
 
-    return data.get("data", {})
+    transaction_data = data.get("data")
+
+    if not transaction_data:
+        raise RuntimeError(
+            "Flutterwave returned no transaction data."
+        )
+
+    return transaction_data
 
 def verify_flutterwave_transaction_by_reference(tx_ref):
+    """
+    Verify a Flutterwave transaction using our transaction reference.
+    """
+
+    if not tx_ref:
+        raise ValueError(
+            "Transaction reference is required."
+        )
+
     response = requests.get(
         f"{FLUTTERWAVE_BASE_URL}/transactions/"
         "verify_by_reference",
@@ -187,7 +210,14 @@ def verify_flutterwave_transaction_by_reference(tx_ref):
             or "Flutterwave transaction verification failed."
         )
 
-    return response_data.get("data", {})
+    transaction_data = response_data.get("data")
+
+    if not transaction_data:
+        raise RuntimeError(
+            "Flutterwave returned no transaction data."
+        )
+
+    return transaction_data
 
 @transaction.atomic
 def activate_subscription_for_payment(payment):
@@ -202,7 +232,6 @@ def activate_subscription_for_payment(payment):
         raise ValueError(
             "Payment must be successful before activation."
         )
-
     organization = payment.organization
 
     subscription = payment.subscription
@@ -258,46 +287,65 @@ def activate_subscription_for_payment(payment):
 
     return subscription
 
-
 @transaction.atomic
 def process_successful_payment(
     payment,
     transaction_data,
 ):
     """
-    Verify Flutterwave transaction data against our
-    local Payment record and activate the subscription.
+    Process a verified Flutterwave transaction.
+
+    This function is idempotent: processing the same local
+    Payment more than once will not extend the subscription
+    multiple times.
     """
 
-    provider_status = (
-        transaction_data.get("status")
+    payment = (
+        payment.__class__.objects
+        .select_for_update()
+        .select_related(
+            "organization",
+            "subscription",
+        )
+        .get(pk=payment.pk)
     )
 
-    provider_amount = Decimal(
-        str(transaction_data.get("amount", "0"))
-    )
+    # Already processed successfully.
+    if payment.status == "successful":
+        return payment.subscription
 
-    provider_currency = (
-        transaction_data.get("currency")
-    )
-
-    provider_tx_ref = (
-        transaction_data.get("tx_ref")
-    )
+    provider_status = str(
+        transaction_data.get("status", "")
+    ).lower()
 
     if provider_status != "successful":
         raise ValueError(
             "Flutterwave transaction is not successful."
         )
 
+    provider_tx_ref = transaction_data.get("tx_ref")
+
     if provider_tx_ref != payment.tx_ref:
         raise ValueError(
             "Transaction reference does not match."
         )
 
+    provider_currency = (
+        transaction_data.get("currency")
+    )
+
     if provider_currency != payment.currency:
         raise ValueError(
             "Transaction currency does not match."
+        )
+
+    try:
+        provider_amount = Decimal(
+            str(transaction_data.get("amount"))
+        )
+    except (InvalidOperation, TypeError):
+        raise ValueError(
+            "Invalid transaction amount."
         )
 
     if provider_amount != payment.amount:
@@ -305,21 +353,45 @@ def process_successful_payment(
             "Transaction amount does not match."
         )
 
-    payment.status = "successful"
-
-    payment.provider_transaction_id = str(
+    provider_transaction_id = str(
         transaction_data.get("id", "")
     )
 
+    if not provider_transaction_id:
+        raise ValueError(
+            "Flutterwave transaction ID is missing."
+        )
+
+    # Prevent one provider transaction from being
+    # associated with another local payment.
+    existing_payment = (
+        payment.__class__.objects
+        .filter(
+            provider_transaction_id=
+            provider_transaction_id,
+        )
+        .exclude(pk=payment.pk)
+        .first()
+    )
+
+    if existing_payment:
+        raise ValueError(
+            "Flutterwave transaction has already "
+            "been associated with another payment."
+        )
+
+    payment.status = "successful"
+
+    payment.provider_transaction_id = (
+        provider_transaction_id
+    )
+
     payment.provider_reference = (
-        transaction_data.get("flw_ref", "")
+        transaction_data.get("flw_ref")
         or ""
     )
 
-    payment.provider_payload = (
-        transaction_data
-    )
-
+    payment.provider_payload = transaction_data
     payment.paid_at = timezone.now()
 
     payment.save(
@@ -333,14 +405,9 @@ def process_successful_payment(
         ]
     )
 
-    subscription = (
-        activate_subscription_for_payment(
-            payment
-        )
+    return activate_subscription_for_payment(
+        payment
     )
-
-    return subscription
-
 
 def subscription_period(billing_cycle):
     if billing_cycle == "annual":

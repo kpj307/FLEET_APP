@@ -100,11 +100,8 @@ class PaymentTests(APITestCase):
             "currency": "UGX",
         }
 
-        with self.settings():
-            import os
-            os.environ["FLW_SECRET_HASH"] = "test-secret"
-
-            response = self.client.post(
+        with self.settings(FLW_SECRET_HASH="test-secret",):
+             response = self.client.post(
                 "/api/payments/flutterwave/webhook/",
                 {
                     "event": "charge.completed",
@@ -118,7 +115,10 @@ class PaymentTests(APITestCase):
                 HTTP_VERIF_HASH="test-secret",
             )
 
-        self.assertEqual(response.status_code, 200)
+        self.assertEqual(
+            response.status_code,
+            200,
+        )
 
         self.subscription.refresh_from_db()
         payment.refresh_from_db()
@@ -174,4 +174,370 @@ class PaymentTests(APITestCase):
         self.assertEqual(
             response.data["status"],
             "pending",
+        )
+
+    @patch("api.payment_views.verify_flutterwave_transaction")
+    def test_webhook_rejects_wrong_amount(
+        self,
+        verify_transaction,
+    ):
+        payment = Payment.objects.create(
+            organization=self.organization,
+            subscription=self.subscription,
+            tx_ref="fleet-wrong-amount",
+            amount=Decimal("75000"),
+            currency="UGX",
+            plan="business",
+            billing_cycle="monthly",
+        )
+
+        verify_transaction.return_value = {
+            "id": 12346,
+            "tx_ref": "fleet-wrong-amount",
+            "flw_ref": "FLW-WRONG",
+            "status": "successful",
+            "amount": 100,
+            "currency": "UGX",
+        }
+
+        with self.settings(FLW_SECRET_HASH="test-secret"):
+            response = self.client.post(
+                "/api/payments/flutterwave/webhook/",
+                {
+                    "event": "charge.completed",
+                    "data": {
+                        "id": 12346,
+                        "tx_ref": "fleet-wrong-amount",
+                    },
+                },
+                format="json",
+                HTTP_VERIF_HASH="test-secret",
+            )
+
+        self.assertEqual(
+            response.status_code,
+            400,
+        )
+
+        payment.refresh_from_db()
+
+        self.assertEqual(
+            payment.status,
+            "pending",
+        )
+
+        self.subscription.refresh_from_db()
+
+        self.assertEqual(
+            self.subscription.plan,
+            "free",
+        )
+
+    @patch("api.payment_views.verify_flutterwave_transaction")
+    def test_webhook_rejects_wrong_currency(
+        self,
+        verify_transaction,
+    ):
+        payment = Payment.objects.create(
+            organization=self.organization,
+            subscription=self.subscription,
+            tx_ref="fleet-wrong-currency",
+            amount=Decimal("75000"),
+            currency="UGX",
+            plan="business",
+            billing_cycle="monthly",
+        )
+
+        verify_transaction.return_value = {
+            "id": 12347,
+            "tx_ref": "fleet-wrong-currency",
+            "flw_ref": "FLW-CURRENCY",
+            "status": "successful",
+            "amount": 75000,
+            "currency": "USD",
+        }
+
+        with self.settings(FLW_SECRET_HASH="test-secret"):
+            response = self.client.post(
+                "/api/payments/flutterwave/webhook/",
+                {
+                    "event": "charge.completed",
+                    "data": {
+                        "id": 12347,
+                        "tx_ref": "fleet-wrong-currency",
+                    },
+                },
+                format="json",
+                HTTP_VERIF_HASH="test-secret",
+            )
+
+        self.assertEqual(
+            response.status_code,
+            400,
+        )
+
+    @patch("api.payment_views.verify_flutterwave_transaction")
+    def test_webhook_rejects_wrong_transaction_reference(
+        self,
+        verify_transaction,
+    ):
+        payment = Payment.objects.create(
+            organization=self.organization,
+            subscription=self.subscription,
+            tx_ref="fleet-real-reference",
+            amount=Decimal("75000"),
+            currency="UGX",
+            plan="business",
+            billing_cycle="monthly",
+        )
+
+        verify_transaction.return_value = {
+            "id": 12348,
+            "tx_ref": "fleet-attacker-reference",
+            "flw_ref": "FLW-REF",
+            "status": "successful",
+            "amount": 75000,
+            "currency": "UGX",
+        }
+
+        with self.settings(FLW_SECRET_HASH="test-secret"):
+            response = self.client.post(
+                "/api/payments/flutterwave/webhook/",
+                {
+                    "event": "charge.completed",
+                    "data": {
+                        "id": 12348,
+                        "tx_ref": "fleet-real-reference",
+                    },
+                },
+                format="json",
+                HTTP_VERIF_HASH="test-secret",
+            )
+
+        self.assertEqual(
+            response.status_code,
+            400,
+        )
+
+    @patch("api.payment_views.verify_flutterwave_transaction")
+    def test_duplicate_webhook_does_not_extend_subscription_twice(
+        self,
+        verify_transaction,
+    ):
+        payment = Payment.objects.create(
+            organization=self.organization,
+            subscription=self.subscription,
+            tx_ref="fleet-duplicate",
+            amount=Decimal("75000"),
+            currency="UGX",
+            plan="business",
+            billing_cycle="monthly",
+        )
+
+        verify_transaction.return_value = {
+            "id": 12349,
+            "tx_ref": "fleet-duplicate",
+            "flw_ref": "FLW-DUPLICATE",
+            "status": "successful",
+            "amount": 75000,
+            "currency": "UGX",
+        }
+
+        with self.settings(FLW_SECRET_HASH="test-secret"):
+            first_response = self.client.post(
+                "/api/payments/flutterwave/webhook/",
+                {
+                    "event": "charge.completed",
+                    "data": {
+                        "id": 12349,
+                        "tx_ref": "fleet-duplicate",
+                    },
+                },
+                format="json",
+                HTTP_VERIF_HASH="test-secret",
+            )
+
+        self.assertEqual(
+            first_response.status_code,
+            200,
+        )
+
+        self.subscription.refresh_from_db()
+
+        first_expiry = (
+            self.subscription.expires_at
+        )
+
+        with self.settings(FLW_SECRET_HASH="test-secret"):
+            second_response = self.client.post(
+                "/api/payments/flutterwave/webhook/",
+                {
+                    "event": "charge.completed",
+                    "data": {
+                        "id": 12349,
+                        "tx_ref": "fleet-duplicate",
+                    },
+                },
+                format="json",
+                HTTP_VERIF_HASH="test-secret",
+            )
+
+        self.assertEqual(
+            second_response.status_code,
+            200,
+        )
+
+        self.subscription.refresh_from_db()
+
+        self.assertEqual(
+            self.subscription.expires_at,
+            first_expiry,
+        )
+
+    @patch("api.payment_views.verify_flutterwave_transaction")
+    def test_payment_status_verifies_pending_payment(
+        self,
+        verify_transaction,
+    ):
+        payment = Payment.objects.create(
+            organization=self.organization,
+            subscription=self.subscription,
+            tx_ref="fleet-callback",
+            amount=Decimal("75000"),
+            currency="UGX",
+            plan="business",
+            billing_cycle="monthly",
+        )
+
+        verify_transaction.return_value = {
+            "id": 12350,
+            "tx_ref": "fleet-callback",
+            "flw_ref": "FLW-CALLBACK",
+            "status": "successful",
+            "amount": 75000,
+            "currency": "UGX",
+        }
+
+        response = self.client.get(
+            f"/api/payments/status/"
+            f"{payment.tx_ref}/",
+            {
+                "transaction_id": "12350",
+            },
+        )
+
+        self.assertEqual(
+            response.status_code,
+            200,
+        )
+
+        payment.refresh_from_db()
+
+        self.assertEqual(
+            payment.status,
+            "successful",
+        )
+
+        self.subscription.refresh_from_db()
+
+        self.assertEqual(
+            self.subscription.plan,
+            "business",
+        )
+
+    def test_payment_status_cannot_be_accessed_by_another_owner(self):
+        other_user = User.objects.create_user(
+            username="other-owner",
+            password="StrongPass123!",
+            email="other@example.com",
+        )
+
+        other_org = Organization.objects.create(
+            owner=other_user,
+            name="Other Fleet",
+            slug="other-fleet",
+        )
+
+        other_subscription = Subscription.objects.create(
+            organization=other_org,
+            plan="free",
+        )
+
+        payment = Payment.objects.create(
+            organization=self.organization,
+            subscription=self.subscription,
+            tx_ref="fleet-private-payment",
+            amount=Decimal("75000"),
+            currency="UGX",
+            plan="business",
+            billing_cycle="monthly",
+        )
+
+        self.client.force_authenticate(other_user)
+
+        response = self.client.get(
+            f"/api/payments/status/"
+            f"{payment.tx_ref}/"
+        )
+
+        self.assertEqual(
+            response.status_code,
+            404,
+        )
+
+    @patch("api.payment_views.verify_flutterwave_transaction")
+    def test_failed_payment_does_not_activate_subscription(
+        self,
+        verify_transaction,
+    ):
+        payment = Payment.objects.create(
+            organization=self.organization,
+            subscription=self.subscription,
+            tx_ref="fleet-failed",
+            amount=Decimal("75000"),
+            currency="UGX",
+            plan="business",
+            billing_cycle="monthly",
+        )
+
+        verify_transaction.return_value = {
+            "id": 12351,
+            "tx_ref": "fleet-failed",
+            "flw_ref": "FLW-FAILED",
+            "status": "failed",
+            "amount": 75000,
+            "currency": "UGX",
+        }
+
+        with self.settings(FLW_SECRET_HASH="test-secret"):
+            response = self.client.post(
+                "/api/payments/flutterwave/webhook/",
+                {
+                    "event": "charge.completed",
+                    "data": {
+                        "id": 12351,
+                        "tx_ref": "fleet-failed",
+                    },
+                },
+                format="json",
+                HTTP_VERIF_HASH="test-secret",
+            )
+
+        self.assertEqual(
+            response.status_code,
+            200,
+        )
+
+        payment.refresh_from_db()
+
+        self.assertEqual(
+            payment.status,
+            "failed",
+        )
+
+        self.subscription.refresh_from_db()
+
+        self.assertEqual(
+            self.subscription.plan,
+            "free",
         )

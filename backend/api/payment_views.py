@@ -1,10 +1,10 @@
 import hmac
-import os
 from decimal import Decimal, InvalidOperation
 
 from django.db import transaction
 from django.http import HttpResponse
 from django.utils import timezone
+from django.conf import settings
 from rest_framework import status
 from rest_framework.permissions import AllowAny, IsAuthenticated
 from rest_framework.response import Response
@@ -18,10 +18,11 @@ import logging
 from .models import Payment, Subscription
 from .payment_services import (
     create_flutterwave_checkout,
-    extend_subscription,
-    verify_flutterwave_transaction,
     process_successful_payment,
+    verify_flutterwave_transaction,
+    verify_flutterwave_transaction_by_reference,
 )
+
 
 logger = logging.getLogger(__name__)
 
@@ -148,28 +149,100 @@ class PaymentStatusView(APIView):
         # redirect/callback fallback in case the webhook
         # has not arrived yet.
         if payment.status == "pending":
-
-            transaction_id = (
-                request.query_params.get(
-                    "transaction_id"
-                )
+            transaction_id = request.query_params.get(
+                "transaction_id"
             )
 
-            if transaction_id:
+            # Flutterwave has not supplied a transaction ID yet.
+            # Keep the payment pending rather than making an
+            # unnecessary provider request.
+            if not transaction_id:
+                return Response(
+                    {
+                        "status": payment.status,
+                        "plan": payment.plan,
+                        "billing_cycle": payment.billing_cycle,
+                    }
+                )
+
+            try:
                 transaction_data = (
                     verify_flutterwave_transaction(
                         transaction_id
                     )
                 )
 
-                subscription = (
-                    process_successful_payment(
-                        payment,
-                        transaction_data,
+                subscription = process_successful_payment(
+                    payment,
+                    transaction_data,
+                )
+
+                return Response(
+                    {
+                        "status": "successful",
+                        "plan": subscription.plan,
+                        "billing_cycle": (
+                            subscription.billing_cycle
+                        ),
+                        "expires_at": (
+                            subscription.expires_at
+                        ),
+                    }
+                )
+
+            except ValueError as exc:
+                logger.warning(
+                    "Payment verification failed for %s: %s",
+                    payment.tx_ref,
+                    exc,
+                )
+
+                return Response(
+                    {
+                        "status": payment.status,
+                        "detail": str(exc),
+                    },
+                    status=status.HTTP_400_BAD_REQUEST,
+                )
+
+            except Exception:
+                logger.exception(
+                    "Payment verification error for %s",
+                    payment.tx_ref,
+                )
+
+                return Response(
+                    {
+                        "status": payment.status,
+                        "detail": (
+                            "Payment verification is temporarily "
+                            "unavailable."
+                        ),
+                    },
+                    status=status.HTTP_502_BAD_GATEWAY,
+                )
+
+        try:
+            if transaction_id:
+                transaction_data = (
+                    verify_flutterwave_transaction(
+                        transaction_id
+                    )
+                )
+            else:
+                transaction_data = (
+                    verify_flutterwave_transaction_by_reference(
+                        payment.tx_ref
                     )
                 )
 
-                return Response({
+                subscription = process_successful_payment(
+                    payment,
+                    transaction_data,
+                )
+
+            return Response(
+                {
                     "status": "successful",
                     "plan": subscription.plan,
                     "billing_cycle": (
@@ -178,35 +251,76 @@ class PaymentStatusView(APIView):
                     "expires_at": (
                         subscription.expires_at
                     ),
-                })
+                }
+            )
 
-        return Response({
-            "status": payment.status,
-            "plan": payment.plan,
-            "billing_cycle": (
-                payment.billing_cycle
-            ),
-        })
+        except ValueError as exc:
+            logger.warning(
+                "Payment verification failed for %s: %s",
+                payment.tx_ref,
+                exc,
+            )
 
+            return Response(
+                {
+                    "status": payment.status,
+                    "detail": str(exc),
+                },
+                status=status.HTTP_400_BAD_REQUEST,
+            )
+
+        except Exception:
+            logger.exception(
+                "Payment verification error for %s",
+                payment.tx_ref,
+            )
+
+            return Response(
+                {
+                    "status": payment.status,
+                    "detail": (
+                        "Payment verification is temporarily "
+                        "unavailable."
+                    ),
+                },
+                status=status.HTTP_502_BAD_GATEWAY,
+            )
+
+
+            return Response({
+                "status": payment.status,
+                "plan": payment.plan,
+                "billing_cycle": (
+                    payment.billing_cycle
+                ),
+            })
 
 class FlutterwaveWebhookView(APIView):
     permission_classes = [AllowAny]
     authentication_classes = []
 
-    @transaction.atomic
     def post(self, request):
-        expected = os.environ.get(
+        expected = getattr(
+            settings,
             "FLW_SECRET_HASH",
             "",
-        )
-        received = request.headers.get("verif-hash", "")
+        ).strip()
 
-        if not expected or not hmac.compare_digest(
-            received,
-            expected,
+        received = request.headers.get(
+            "verif-hash",
+            "",
+        ).strip()
+
+        if (
+            not expected
+            or not received
+            or not hmac.compare_digest(
+                received,
+                expected,
+            )
         ):
             return HttpResponse(
-                status=401,
+                status=401
             )
 
         payload = request.data
@@ -215,32 +329,60 @@ class FlutterwaveWebhookView(APIView):
         tx_ref = data.get("tx_ref")
         transaction_id = data.get("id")
 
-        if not tx_ref or not transaction_id:
-            return HttpResponse(status=400)
+        if not tx_ref:
+            return HttpResponse(
+                status=400
+            )
 
         payment = (
-            Payment.objects.select_for_update()
+            Payment.objects
+            .select_for_update()
             .filter(tx_ref=tx_ref)
             .first()
         )
 
+        # Unknown transaction references must never
+        # create a subscription.
         if not payment:
-            # Do not create subscriptions from unknown references.
-            return HttpResponse(status=200)
+            return HttpResponse(
+                status=200
+            )
 
+        # Webhook retries are expected.
         if payment.status == "successful":
-            return HttpResponse(status=200)
+            return HttpResponse(
+                status=200
+            )
+
+        if not transaction_id:
+            return HttpResponse(
+                status=400
+            )
 
         try:
-            verified = verify_flutterwave_transaction(
-                transaction_id
+            verified = (
+                verify_flutterwave_transaction(
+                    transaction_id
+                )
             )
+
         except Exception:
-            return HttpResponse(status=502)
+            logger.exception(
+                "Flutterwave verification failed for %s",
+                tx_ref,
+            )
+
+            return HttpResponse(
+                status=502
+            )
 
         provider_status = str(
             verified.get("status", "")
         ).lower()
+
+        # -------------------------------------------------
+        # FAILED / CANCELLED PAYMENT
+        # -------------------------------------------------
 
         if provider_status != "successful":
             payment.status = (
@@ -248,14 +390,23 @@ class FlutterwaveWebhookView(APIView):
                 if provider_status == "cancelled"
                 else "failed"
             )
+
             payment.provider_transaction_id = str(
-                verified.get("id", transaction_id)
+                verified.get(
+                    "id",
+                    transaction_id,
+                )
             )
-            payment.provider_reference = verified.get(
-                "flw_ref",
-                "",
+
+            payment.provider_reference = (
+                verified.get(
+                    "flw_ref",
+                    "",
+                )
             )
+
             payment.provider_payload = verified
+
             payment.save(
                 update_fields=[
                     "status",
@@ -265,66 +416,97 @@ class FlutterwaveWebhookView(APIView):
                     "updated_at",
                 ]
             )
-            return HttpResponse(status=200)
+
+            # This was a valid webhook. The payment simply
+            # wasn't successful.
+            return HttpResponse(
+                status=200
+            )
+
+        # -------------------------------------------------
+        # SUCCESSFUL PAYMENT
+        # -------------------------------------------------
 
         try:
             verified_amount = Decimal(
-                str(verified.get("amount"))
+                str(
+                    verified.get("amount")
+                )
             )
-        except (InvalidOperation, TypeError):
-            return HttpResponse(status=400)
 
-        verified_currency = verified.get("currency")
-
-        if (
-            verified_amount != payment.amount
-            or verified_currency != payment.currency
-            or verified.get("tx_ref") != payment.tx_ref
+        except (
+            InvalidOperation,
+            TypeError,
         ):
-            return HttpResponse(status=400)
+            return HttpResponse(
+                status=400
+            )
 
-        subscription = payment.subscription
-
-        if not subscription:
-            subscription = payment.organization.subscription
-
-        subscription.plan = payment.plan
-        subscription.billing_cycle = payment.billing_cycle
-
-        # Extend from the existing expiry when the customer renews
-        # before expiration; otherwise start from now.
-        extend_subscription(
-            subscription,
-            payment.billing_cycle,
-        )
-        subscription.save(
-            update_fields=[
-                "plan",
-                "billing_cycle",
-                "status",
-                "expires_at",
-            ]
+        verified_currency = (
+            verified.get("currency")
         )
 
-        payment.status = "successful"
-        payment.provider_transaction_id = str(
-            verified.get("id", transaction_id)
-        )
-        payment.provider_reference = verified.get(
-            "flw_ref",
-            "",
-        )
-        payment.provider_payload = verified
-        payment.paid_at = timezone.now()
-        payment.save(
-            update_fields=[
-                "status",
-                "provider_transaction_id",
-                "provider_reference",
-                "provider_payload",
-                "paid_at",
-                "updated_at",
-            ]
+        verified_tx_ref = (
+            verified.get("tx_ref")
         )
 
-        return HttpResponse(status=200)
+        # Never trust the amount/currency/reference
+        # supplied by the client or webhook alone.
+        if verified_amount != payment.amount:
+            logger.warning(
+                "Payment amount mismatch for %s",
+                tx_ref,
+            )
+            return HttpResponse(
+                status=400
+            )
+
+        if verified_currency != payment.currency:
+            logger.warning(
+                "Payment currency mismatch for %s",
+                tx_ref,
+            )
+            return HttpResponse(
+                status=400
+            )
+
+        if verified_tx_ref != payment.tx_ref:
+            logger.warning(
+                "Payment reference mismatch for %s",
+                tx_ref,
+            )
+            return HttpResponse(
+                status=400
+            )
+
+        try:
+            process_successful_payment(
+                payment,
+                verified,
+            )
+
+        except ValueError as exc:
+            logger.warning(
+                "Invalid Flutterwave payment %s: %s",
+                tx_ref,
+                exc,
+            )
+
+            return HttpResponse(
+                status=400
+            )
+
+        except Exception:
+            logger.exception(
+                "Payment processing failed for %s",
+                tx_ref,
+            )
+
+            return HttpResponse(
+                status=500
+            )
+
+        return HttpResponse(
+            status=200
+        )
+
