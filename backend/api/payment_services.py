@@ -7,7 +7,7 @@ from django.conf import settings
 from django.utils import timezone
 from django.db import transaction
 
-from .models import Subscription
+from .models import Payment, Subscription
 
 
 FLUTTERWAVE_BASE_URL = "https://api.flutterwave.com/v3"
@@ -225,39 +225,41 @@ def activate_subscription_for_payment(payment):
     Activate the organization's subscription after a
     successfully verified payment.
 
-    Safe to call more than once for the same payment.
+    Safe to call repeatedly for the same successful payment.
     """
 
     if payment.status != "successful":
         raise ValueError(
             "Payment must be successful before activation."
         )
+
+    subscription = (
+        Subscription.objects
+        .select_for_update()
+        .get(
+            pk=payment.subscription_id
+        )
+    )
+
     organization = payment.organization
 
-    subscription = payment.subscription
-
-    if subscription is None:
-        subscription = organization.subscription
-
-    now = timezone.now()
+    current_time = timezone.now()
 
     if payment.billing_cycle == "annual":
         duration = timedelta(days=365)
     else:
         duration = timedelta(days=30)
 
-    # Extend an existing active subscription rather than
-    # throwing away the customer's remaining time.
     if (
         subscription.status == "active"
         and subscription.expires_at
-        and subscription.expires_at > now
+        and subscription.expires_at > current_time
     ):
         expires_at = (
             subscription.expires_at + duration
         )
     else:
-        expires_at = now + duration
+        expires_at = current_time + duration
 
     subscription.plan = payment.plan
     subscription.billing_cycle = (
@@ -293,15 +295,16 @@ def process_successful_payment(
     transaction_data,
 ):
     """
-    Process a verified Flutterwave transaction.
+    Process a verified Flutterwave transaction exactly once.
 
-    This function is idempotent: processing the same local
-    Payment more than once will not extend the subscription
-    multiple times.
+    This function is idempotent:
+    processing the same local Payment repeatedly will not
+    extend the subscription repeatedly.
     """
 
+    # Lock the local payment row.
     payment = (
-        payment.__class__.objects
+        Payment.objects
         .select_for_update()
         .select_related(
             "organization",
@@ -310,9 +313,23 @@ def process_successful_payment(
         .get(pk=payment.pk)
     )
 
-    # Already processed successfully.
+    # --------------------------------------------------
+    # IDEMPOTENCY
+    # --------------------------------------------------
+
     if payment.status == "successful":
-        return payment.subscription
+        subscription = payment.subscription
+
+        if subscription is None:
+            subscription = (
+                payment.organization.subscription
+            )
+
+        return subscription
+
+    # --------------------------------------------------
+    # VALIDATE PROVIDER RESPONSE
+    # --------------------------------------------------
 
     provider_status = str(
         transaction_data.get("status", "")
@@ -323,7 +340,9 @@ def process_successful_payment(
             "Flutterwave transaction is not successful."
         )
 
-    provider_tx_ref = transaction_data.get("tx_ref")
+    provider_tx_ref = (
+        transaction_data.get("tx_ref")
+    )
 
     if provider_tx_ref != payment.tx_ref:
         raise ValueError(
@@ -341,9 +360,17 @@ def process_successful_payment(
 
     try:
         provider_amount = Decimal(
-            str(transaction_data.get("amount"))
+            str(
+                transaction_data.get(
+                    "amount",
+                    "0",
+                )
+            )
         )
-    except (InvalidOperation, TypeError):
+    except (
+        InvalidOperation,
+        TypeError,
+    ):
         raise ValueError(
             "Invalid transaction amount."
         )
@@ -355,17 +382,20 @@ def process_successful_payment(
 
     provider_transaction_id = str(
         transaction_data.get("id", "")
-    )
+    ).strip()
 
     if not provider_transaction_id:
         raise ValueError(
             "Flutterwave transaction ID is missing."
         )
 
-    # Prevent one provider transaction from being
-    # associated with another local payment.
+    # --------------------------------------------------
+    # PROVIDER TRANSACTION INTEGRITY
+    # --------------------------------------------------
+
     existing_payment = (
-        payment.__class__.objects
+        Payment.objects
+        .select_for_update()
         .filter(
             provider_transaction_id=
             provider_transaction_id,
@@ -380,6 +410,10 @@ def process_successful_payment(
             "been associated with another payment."
         )
 
+    # --------------------------------------------------
+    # RECORD PAYMENT
+    # --------------------------------------------------
+
     payment.status = "successful"
 
     payment.provider_transaction_id = (
@@ -387,7 +421,10 @@ def process_successful_payment(
     )
 
     payment.provider_reference = (
-        transaction_data.get("flw_ref")
+        transaction_data.get(
+            "flw_ref",
+            "",
+        )
         or ""
     )
 
@@ -404,6 +441,26 @@ def process_successful_payment(
             "updated_at",
         ]
     )
+
+    # --------------------------------------------------
+    # LOCK SUBSCRIPTION
+    # --------------------------------------------------
+
+    subscription = (
+        Subscription.objects
+        .select_for_update()
+        .get(
+            pk=payment.subscription_id
+        )
+    )
+
+    # Attach the locked instance to the payment object
+    # used by the activation function.
+    payment.subscription = subscription
+
+    # --------------------------------------------------
+    # ACTIVATE ONCE
+    # --------------------------------------------------
 
     return activate_subscription_for_payment(
         payment

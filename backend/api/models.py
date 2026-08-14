@@ -170,8 +170,9 @@ class Payment(models.Model):
 
     provider_transaction_id = models.CharField(
         max_length=255,
+        unique=True,
+        null=True,
         blank=True,
-        db_index=True,
     )
 
     provider_reference = models.CharField(
@@ -227,6 +228,20 @@ class Payment(models.Model):
 
     class Meta:
         ordering = ["-created_at"]
+
+        constraints = [
+            models.CheckConstraint(
+                condition=(
+                    models.Q(
+                        status="successful",
+                        provider_transaction_id__isnull=False,
+                    )
+                    |
+                    ~models.Q(status="successful")
+                ),
+                name="successful_payment_has_provider_id",
+            ),
+        ]
 
 
 class Vehicle(models.Model):

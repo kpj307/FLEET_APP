@@ -3,8 +3,12 @@ from unittest.mock import Mock, patch
 
 from django.contrib.auth.models import User
 from rest_framework.test import APITestCase
+from django.db import IntegrityError
 
 from .models import Organization, Payment, Subscription
+from api.payment_services import (
+    process_successful_payment,
+)
 
 
 class PaymentTests(APITestCase):
@@ -541,3 +545,161 @@ class PaymentTests(APITestCase):
             self.subscription.plan,
             "free",
         )
+
+    def test_provider_transaction_id_is_unique(self):
+        first_payment = Payment.objects.create(
+            organization=self.organization,
+            subscription=self.subscription,
+            tx_ref="fleet-provider-unique-1",
+            amount=Decimal("75000"),
+            currency="UGX",
+            plan="business",
+            billing_cycle="monthly",
+            provider_transaction_id="FLW-UNIQUE-001",
+        )
+
+        self.assertIsNotNone(
+            first_payment.pk
+        )
+
+        with self.assertRaises(
+            IntegrityError
+        ):
+            Payment.objects.create(
+                organization=self.organization,
+                subscription=self.subscription,
+                tx_ref="fleet-provider-unique-2",
+                amount=Decimal("75000"),
+                currency="UGX",
+                plan="business",
+                billing_cycle="monthly",
+                provider_transaction_id="FLW-UNIQUE-001",
+            )
+
+    def test_multiple_pending_payments_can_have_no_provider_transaction_id(self,):
+        first_payment = Payment.objects.create(
+            organization=self.organization,
+            subscription=self.subscription,
+            tx_ref="fleet-pending-001",
+            amount=Decimal("75000"),
+            currency="UGX",
+            plan="business",
+            billing_cycle="monthly",
+        )
+
+        second_payment = Payment.objects.create(
+            organization=self.organization,
+            subscription=self.subscription,
+            tx_ref="fleet-pending-002",
+            amount=Decimal("75000"),
+            currency="UGX",
+            plan="business",
+            billing_cycle="monthly",
+        )
+
+        self.assertIsNone(
+            first_payment.provider_transaction_id
+        )
+
+        self.assertIsNone(
+            second_payment.provider_transaction_id
+        )
+
+    @patch("api.payment_services.activate_subscription_for_payment")
+    def test_successful_payment_processing_is_idempotent(self, activate_subscription,):
+        activate_subscription.return_value = (
+            self.subscription
+        )
+
+        payment = Payment.objects.create(
+            organization=self.organization,
+            subscription=self.subscription,
+            tx_ref="fleet-idempotent-001",
+            amount=Decimal("75000"),
+            currency="UGX",
+            plan="business",
+            billing_cycle="monthly",
+        )
+
+        transaction_data = {
+            "id": 900001,
+            "tx_ref": "fleet-idempotent-001",
+            "flw_ref": "FLW-IDEMPOTENT-001",
+            "status": "successful",
+            "amount": 75000,
+            "currency": "UGX",
+        }
+
+        first_result = process_successful_payment(
+            payment,
+            transaction_data,
+        )
+
+        payment.refresh_from_db()
+
+        second_result = process_successful_payment(
+            payment,
+            transaction_data,
+        )
+
+        self.assertEqual(
+            first_result.pk,
+            second_result.pk,
+        )
+
+        activate_subscription.assert_called_once()
+
+    @patch("api.payment_services.activate_subscription_for_payment")
+    def test_provider_transaction_cannot_be_reused(
+        self,
+        activate_subscription,
+    ):
+        activate_subscription.return_value = (
+            self.subscription
+        )
+
+        first_payment = Payment.objects.create(
+            organization=self.organization,
+            subscription=self.subscription,
+            tx_ref="fleet-provider-reuse-001",
+            amount=Decimal("75000"),
+            currency="UGX",
+            plan="business",
+            billing_cycle="monthly",
+        )
+
+        second_payment = Payment.objects.create(
+            organization=self.organization,
+            subscription=self.subscription,
+            tx_ref="fleet-provider-reuse-002",
+            amount=Decimal("75000"),
+            currency="UGX",
+            plan="business",
+            billing_cycle="monthly",
+        )
+
+        transaction_data = {
+            "id": 900002,
+            "tx_ref": first_payment.tx_ref,
+            "flw_ref": "FLW-REUSE-001",
+            "status": "successful",
+            "amount": 75000,
+            "currency": "UGX",
+        }
+
+        process_successful_payment(
+            first_payment,
+            transaction_data,
+        )
+
+        transaction_data["tx_ref"] = (
+            second_payment.tx_ref
+        )
+
+        with self.assertRaises(
+            ValueError
+        ):
+            process_successful_payment(
+                second_payment,
+                transaction_data,
+            )
