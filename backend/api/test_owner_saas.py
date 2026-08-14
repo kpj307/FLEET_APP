@@ -743,7 +743,11 @@ class OwnerSaaSSubscriptionTests(APITestCase):
             format="json",
         )
 
-        self.assertEqual(response.status_code, 200)
+        self.assertEqual(
+            response.status_code,
+            200,
+            response.data,
+        )
 
         self.organization.refresh_from_db()
 
@@ -772,7 +776,7 @@ class OwnerSaaSSubscriptionTests(APITestCase):
             },
         )
 
-    def test_owner_can_change_subscription(self):
+    def test_owner_cannot_change_subscription_directly(self):
         response = self.client.patch(
             "/api/subscription/",
             {
@@ -782,16 +786,16 @@ class OwnerSaaSSubscriptionTests(APITestCase):
             format="json",
         )
 
-        self.assertEqual(response.status_code, 200)
-
         self.assertEqual(
-            response.data["plan"],
-            "business",
+            response.status_code,
+            status.HTTP_400_BAD_REQUEST,
         )
 
+        self.organization.subscription.refresh_from_db()
+
         self.assertEqual(
-            response.data["billing_cycle"],
-            "annual",
+            self.organization.subscription.plan,
+            "free",
         )
 
     def test_invalid_subscription_plan_is_rejected(self):
@@ -806,4 +810,170 @@ class OwnerSaaSSubscriptionTests(APITestCase):
         self.assertEqual(
             response.status_code,
             status.HTTP_400_BAD_REQUEST,
+        )
+
+    def test_expired_paid_subscription_falls_back_to_free(self):
+        from datetime import timedelta
+        from django.utils.timezone import now
+
+        subscription = self.organization.subscription
+
+        subscription.plan = "professional"
+        subscription.status = "active"
+        subscription.billing_cycle = "monthly"
+        subscription.expires_at = (
+            now() - timedelta(days=1)
+        )
+        subscription.save()
+
+        response = self.client.get(
+            "/api/subscription/"
+        )
+
+        self.assertEqual(
+            response.status_code,
+            status.HTTP_200_OK,
+        )
+
+        self.assertEqual(
+            response.data["plan"],
+            "free",
+        )
+
+        subscription.refresh_from_db()
+
+        self.assertEqual(
+            subscription.plan,
+            "free",
+        )
+
+        self.assertEqual(
+            subscription.status,
+            "active",
+        )
+
+        self.assertIsNone(
+            subscription.expires_at
+        )
+
+    def test_active_paid_subscription_remains_active(self):
+        from datetime import timedelta
+        from django.utils.timezone import now
+
+        subscription = self.organization.subscription
+
+        subscription.plan = "business"
+        subscription.status = "active"
+        subscription.billing_cycle = "monthly"
+        subscription.expires_at = (
+            now() + timedelta(days=30)
+        )
+        subscription.save()
+
+        response = self.client.get(
+            "/api/subscription/"
+        )
+
+        self.assertEqual(
+            response.status_code,
+            status.HTTP_200_OK,
+        )
+
+        self.assertEqual(
+            response.data["plan"],
+            "business",
+        )
+
+        subscription.refresh_from_db()
+
+        self.assertEqual(
+            subscription.plan,
+            "business",
+        )
+
+    def test_expired_subscription_uses_free_vehicle_limit(self):
+        from datetime import timedelta
+        from django.utils.timezone import now
+
+        subscription = self.organization.subscription
+
+        subscription.plan = "starter"
+        subscription.status = "active"
+        subscription.billing_cycle = "monthly"
+        subscription.expires_at = (
+            now() - timedelta(days=1)
+        )
+        subscription.save()
+
+        # Free plan allows 3 vehicles.
+        Vehicle.objects.create(
+            organization=self.organization,
+            plate="UBA301A",
+            make="Toyota",
+        )
+
+        Vehicle.objects.create(
+            organization=self.organization,
+            plate="UBA302A",
+            make="Toyota",
+        )
+
+        Vehicle.objects.create(
+            organization=self.organization,
+            plate="UBA303A",
+            make="Toyota",
+        )
+
+        response = self.client.post(
+            "/api/vehicles/",
+            {
+                "plate": "UBA304A",
+                "make": "Toyota",
+            },
+            format="json",
+        )
+
+        self.assertEqual(
+            response.status_code,
+            status.HTTP_400_BAD_REQUEST,
+        )
+
+        self.assertIn(
+            "plan",
+            response.data,
+        )
+
+    def test_subscription_refresh_status_downgrades_expired_plan(self):
+        from datetime import timedelta
+        from django.utils.timezone import now
+
+        subscription = self.organization.subscription
+
+        subscription.plan = "professional"
+        subscription.status = "active"
+        subscription.billing_cycle = "annual"
+        subscription.expires_at = (
+            now() - timedelta(seconds=1)
+        )
+        subscription.save()
+
+        subscription.refresh_status()
+
+        self.assertEqual(
+            subscription.plan,
+            "free",
+        )
+
+        self.assertEqual(
+            subscription.status,
+            "active",
+        )
+
+        self.assertEqual(
+            subscription.billing_cycle,
+            "monthly",
+        )
+
+        self.assertIsNone(
+            subscription.expires_at
         )

@@ -87,6 +87,56 @@ class Subscription(models.Model):
     external_customer_id = models.CharField(max_length=255, blank=True)
     external_subscription_id = models.CharField(max_length=255, blank=True)
 
+    def is_expired(self):
+        """
+        Determine whether the current paid subscription has expired.
+
+        Free subscriptions never expire.
+        Paid subscriptions without an expiration date are treated
+        as expired because they do not have a valid entitlement period.
+        """
+        if self.plan == "free":
+            return False
+
+        if not self.expires_at:
+            return True
+
+        return self.expires_at <= now()
+
+
+    def refresh_status(self):
+        """
+        Synchronize the subscription with its expiration date.
+
+        An expired paid subscription is automatically downgraded
+        to the Free plan.
+        """
+        if self.plan != "free" and self.is_expired():
+            self.plan = "free"
+            self.status = "active"
+            self.billing_cycle = "monthly"
+            self.expires_at = None
+
+            self.save(
+                update_fields=[
+                    "plan",
+                    "status",
+                    "billing_cycle",
+                    "expires_at",
+                ]
+            )
+
+        return self
+
+
+    @property
+    def effective_plan(self):
+        """
+        Return the plan currently available to the organization.
+        """
+        self.refresh_status()
+        return self.plan
+
     def __str__(self):
         return f"{self.organization.name} - {self.plan}"
 

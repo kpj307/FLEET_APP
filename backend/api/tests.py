@@ -189,18 +189,31 @@ class OwnerSaaSTests(APITestCase):
             700000.00,
         )
 
-    def test_owner_can_change_subscription_plan(self):
+    def test_owner_cannot_change_subscription_plan_directly(self):
         response = self.client.patch(
             "/api/subscription/",
             {
                 "plan": "business",
-                "billing_cycle": "monthly",
+                "billing_cycle": "annual",
             },
             format="json",
         )
 
-        self.assertEqual(response.status_code, status.HTTP_200_OK)
-        self.assertEqual(response.data["plan"], "business")
+        self.assertEqual(
+            response.status_code,
+            status.HTTP_400_BAD_REQUEST,
+        )
+
+        subscription = (
+            self.organization.subscription
+        )
+
+        subscription.refresh_from_db()
+
+        self.assertEqual(
+            subscription.plan,
+            "free",
+        )
 
     def test_owner_can_update_organization(self):
         response = self.client.patch(
@@ -209,7 +222,11 @@ class OwnerSaaSTests(APITestCase):
             format="json",
         )
 
-        self.assertEqual(response.status_code, status.HTTP_200_OK)
+        self.assertEqual(
+            response.status_code,
+            status.HTTP_200_OK,
+            response.data,
+        )
         self.assertEqual(
             response.data["name"],
             "Updated Transport",

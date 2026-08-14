@@ -32,6 +32,18 @@ urlpatterns = [
         name="flutterwave-webhook",
     ),
 
+    path(
+        "organization/",
+        views.OrganizationView.as_view(),
+        name="organization",
+    ),
+
+    path(
+        "subscription/",
+        views.SubscriptionView.as_view(),
+        name="subscription",
+    ),
+
     # Existing fleet endpoints
     path("vehicles/", views.VehicleListCreate.as_view(), name="vehicle-list"),
     path(

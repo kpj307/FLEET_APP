@@ -3,38 +3,19 @@ from django.utils.text import slugify
 
 from .models import Organization, Subscription
 
-
 PLAN_LIMITS = {
-    "free": {
-        "max_vehicles": 3,
-        "price_monthly": 0,
-        "price_annual": 0,
-        "reports": False,
-        "exports": False,
-    },
-    "starter": {
-        "max_vehicles": 5,
-        "price_monthly": 25000,
-        "price_annual": 250000,
-        "reports": True,
-        "exports": False,
-    },
-    "business": {
-        "max_vehicles": 25,
-        "price_monthly": 75000,
-        "price_annual": 750000,
-        "reports": True,
-        "exports": True,
-    },
-    "professional": {
-        "max_vehicles": 100,
-        "price_monthly": 150000,
-        "price_annual": 1500000,
-        "reports": True,
-        "exports": True,
-    },
+    plan: {
+        "max_vehicles": int(values["max_vehicles"]),
+        "price_monthly": values["monthly"],
+        "price_annual": values["annual"],
+        "reports": plan != "free",
+        "exports": plan in {
+            "business",
+            "professional",
+        },
+    }
+    for plan, values in Subscription.PLAN_PRICES.items()
 }
-
 
 def unique_slug(name):
     base = slugify(name) or "fleet"
@@ -71,5 +52,14 @@ def create_owner_organization(user, business_name):
 
 
 def can_add_vehicle(organization):
-    limit = PLAN_LIMITS[organization.subscription.plan]["max_vehicles"]
+    subscription = organization.subscription
+
+    # Make sure expired subscriptions are downgraded
+    # before calculating the vehicle limit.
+    subscription.refresh_status()
+
+    limit = PLAN_LIMITS[
+        subscription.plan
+    ]["max_vehicles"]
+
     return organization.vehicles.count() < limit

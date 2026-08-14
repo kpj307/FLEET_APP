@@ -73,63 +73,58 @@ class CreateUserView(generics.CreateAPIView):
     def perform_create(self, serializer):
         serializer.save()
 
-
 class OrganizationView(APIView):
     permission_classes = [IsAuthenticated]
 
     def get(self, request):
         organization = request.user.organization
+
         return Response(
             OrganizationSerializer(organization).data
         )
 
     def patch(self, request):
         organization = request.user.organization
+
         serializer = OrganizationSerializer(
             organization,
             data=request.data,
             partial=True,
         )
-        serializer.is_valid(raise_exception=True)
-        serializer.save()
-        return Response(serializer.data)
 
+        serializer.is_valid(
+            raise_exception=True
+        )
+
+        serializer.save()
+
+        return Response(
+            serializer.data
+        )
 
 class SubscriptionView(APIView):
     permission_classes = [IsAuthenticated]
 
     def get(self, request):
-        subscription = request.user.organization.subscription
+        subscription = (
+            request.user.organization.subscription
+        )
+
+        subscription.refresh_status()
+
         return Response(
             SubscriptionSerializer(subscription).data
         )
 
     def patch(self, request):
-        subscription = request.user.organization.subscription
-        plan = request.data.get("plan")
-
-        if plan not in PLAN_LIMITS:
-            raise ValidationError({"plan": "Invalid plan."})
-
-        billing_cycle = request.data.get(
-            "billing_cycle",
-            subscription.billing_cycle,
+        raise ValidationError(
+            {
+                "detail": (
+                    "Subscription changes must be completed "
+                    "through the payment process."
+                )
+            }
         )
-
-        if billing_cycle not in {"monthly", "annual"}:
-            raise ValidationError(
-                {"billing_cycle": "Invalid billing cycle."}
-            )
-
-        subscription.plan = plan
-        subscription.billing_cycle = billing_cycle
-        subscription.status = "active"
-        subscription.save()
-
-        return Response(
-            SubscriptionSerializer(subscription).data
-        )
-
 
 class PlanListView(APIView):
     permission_classes = [AllowAny]
@@ -256,6 +251,9 @@ class DashboardView(APIView):
     def get(self, request):
         organization = request.user.organization
 
+        subscription = organization.subscription
+        subscription.refresh_status()
+
         incomes = Income.objects.filter(
             vehicle__organization=organization
         )
@@ -298,6 +296,6 @@ class DashboardView(APIView):
                 "expenses": total_expense,
                 "profit": total_income - total_expense,
                 "expense_breakdown": breakdown,
-                "plan": organization.subscription.plan,
+                "plan": subscription.plan,
             }
         )
