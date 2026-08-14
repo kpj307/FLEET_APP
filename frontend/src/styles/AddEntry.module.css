@@ -1,0 +1,25 @@
+.form {
+  display: flex;
+  gap: 10px;
+  margin-bottom: 12px;
+}
+
+.form input {
+  padding: 8px;
+  flex: 1;
+  border-radius: 6px;
+  border: 1px solid #ddd;
+}
+
+.form button {
+  padding: 8px 14px;
+  background: #16a34a;
+  color: white;
+  border-radius: 6px;
+  cursor: pointer;
+}
+
+@media (max-width:700px) {
+  .form { flex-direction: column; }
+  button { width:100%; }
+}

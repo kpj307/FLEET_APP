@@ -1,0 +1,30 @@
+.container {
+  min-height: 70vh;
+  display: grid;
+  place-items: center;
+  padding: 24px;
+}
+
+.card {
+  width: min(500px, 100%);
+  padding: 36px;
+  border: 1px solid #e5e7eb;
+  border-radius: 16px;
+  background: white;
+  text-align: center;
+}
+
+.card p {
+  color: #64748b;
+  line-height: 1.6;
+}
+
+.card button {
+  border: 0;
+  border-radius: 8px;
+  padding: 11px 18px;
+  background: #2563eb;
+  color: white;
+  font-weight: 700;
+  cursor: pointer;
+}

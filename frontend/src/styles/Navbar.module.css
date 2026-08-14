@@ -1,0 +1,78 @@
+.navbar {
+  background: #261127;
+  color: white;
+  padding: 16px;
+  display: flex;
+  align-items: center;
+  justify-content: space-between;
+  position: relative; /* 👈 important */
+}
+
+.brand {
+  font-size: 18px;
+  font-weight: 600;
+}
+
+/* Desktop links */
+.links {
+  display: flex;
+  gap: 20px;
+  align-items: center;
+}
+
+.links a {
+  color: white;
+  text-decoration: none;
+}
+
+.logout {
+  background: none;
+  border: none;
+  color: #f87171;
+  cursor: pointer;
+  font-size: 14px;
+}
+
+/* Hamburger */
+.menuBtn {
+  display: none;
+  background: none;
+  border: none;
+  color: white;
+  font-size: 24px;
+  cursor: pointer;
+}
+
+/* 📱 Mobile */
+@media (max-width: 768px) {
+  .menuBtn {
+    display: flex;
+    justify-content: right;
+    position: absolute;   /* 🔥 THIS is the key */
+    right: 16px;
+    z-index: 1100;     /* Above navbar & menu */
+  }
+
+  .links {
+    position: absolute;
+    top: 60px;
+    left: 0;
+    background: #111827;
+    flex-direction: column;
+    width: 100%;
+    display: none;
+    padding: 10px 0;
+    z-index: 999;
+  }
+
+  .links.show {
+    display: flex;
+  }
+
+  .links a,
+  .logout {
+    width: 100%;
+    text-align: center;
+    padding: 12px 0;
+  }
+}

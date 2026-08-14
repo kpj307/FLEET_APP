@@ -1,0 +1,118 @@
+.container {
+  max-width: 1200px;
+  margin: 0 auto;
+  padding: 40px 24px;
+}
+
+.header {
+  text-align: center;
+  margin-bottom: 30px;
+}
+
+.eyebrow {
+  color: #2563eb;
+  font-size: 12px;
+  font-weight: 800;
+  text-transform: uppercase;
+  letter-spacing: .08em;
+}
+
+.header h1 {
+  margin: 8px 0;
+  font-size: 34px;
+}
+
+.header p {
+  color: #64748b;
+}
+
+.billing {
+  display: inline-flex;
+  gap: 4px;
+  padding: 4px;
+  margin-top: 18px;
+  background: #f1f5f9;
+  border-radius: 10px;
+}
+
+.billing button {
+  border: 0;
+  background: transparent;
+  padding: 9px 14px;
+  border-radius: 7px;
+  cursor: pointer;
+}
+
+.billing .active {
+  background: white;
+  box-shadow: 0 1px 4px rgba(15, 23, 42, .1);
+}
+
+.grid {
+  display: grid;
+  grid-template-columns: repeat(4, 1fr);
+  gap: 16px;
+}
+
+.card {
+  padding: 24px;
+  border: 1px solid #e5e7eb;
+  border-radius: 14px;
+  background: white;
+}
+
+.current {
+  border: 2px solid #2563eb;
+}
+
+.price {
+  font-size: 24px;
+  font-weight: 800;
+}
+
+.price small {
+  color: #64748b;
+  font-size: 12px;
+  font-weight: 400;
+}
+
+.card li {
+  margin: 10px 0;
+  color: #475569;
+}
+
+.card button {
+  width: 100%;
+  border: 0;
+  padding: 11px;
+  border-radius: 8px;
+  background: #2563eb;
+  color: white;
+  font-weight: 700;
+  cursor: pointer;
+}
+
+.card button:disabled {
+  background: #94a3b8;
+}
+
+.message {
+  max-width: 800px;
+  margin: 0 auto 20px;
+  padding: 12px;
+  border-radius: 8px;
+  background: #eff6ff;
+  color: #1d4ed8;
+}
+
+@media (max-width: 1000px) {
+  .grid {
+    grid-template-columns: 1fr 1fr;
+  }
+}
+
+@media (max-width: 600px) {
+  .grid {
+    grid-template-columns: 1fr;
+  }
+}

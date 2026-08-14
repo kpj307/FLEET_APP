@@ -1,0 +1,90 @@
+.container {
+  padding: 20px;
+}
+
+.filters {
+  margin-bottom: 20px;
+}
+
+.buttons {
+  display: flex;
+  gap: 8px;
+  margin-top: 8px;
+  flex-wrap: wrap;
+}
+
+.buttons button {
+  padding: 6px 12px;
+  border-radius: 6px;
+  border: 1px solid #ddd;
+  background: #f8fafc;
+  cursor: pointer;
+}
+
+.buttons button:hover {
+  background: #e2e8f0;
+}
+
+.buttons button.active {
+  background: #2563eb;
+  color: white;
+}
+
+.customDates {
+  display: flex;
+  gap: 8px;
+  margin-top: 8px;
+}
+
+.totals p {
+  margin: 4px 0;
+}
+
+.addEntries {
+  margin-top: 20px;
+}
+
+.table {
+  width: 100%;
+  border-collapse: collapse;
+  margin-top: 10px;
+}
+
+.table th {
+  background: #a8aaac;
+}
+
+.table th,
+.table td {
+  padding: 10px;
+  border: 1px solid #eee;
+  text-align: center;
+}
+
+.table tr:hover {
+  background: #f9fafb;
+}
+
+.actions {
+  display: flex;
+  justify-content: center;
+  gap: 8px;
+}
+
+/* MOBILE OPTIMIZATION */
+@media (max-width: 600px) {
+  .table th,
+  .table td {
+    padding: 8px;
+    font-size: 13px;
+  }
+
+  .actions {
+    flex-direction: column;
+    gap: 4px;
+  }
+
+  .actions button {
+    width: 100%;
+  }
+}
