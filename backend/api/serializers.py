@@ -86,8 +86,11 @@ class SubscriptionSerializer(serializers.ModelSerializer):
             "price_monthly",
             "price_annual",
         ]
+
         read_only_fields = [
+            "plan",
             "status",
+            "billing_cycle",
             "started_at",
             "expires_at",
             "vehicle_count",
