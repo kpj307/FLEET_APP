@@ -19,6 +19,10 @@ from .payment_services import (
     verify_flutterwave_transaction,
     verify_flutterwave_transaction_by_reference,
 )
+from .throttles import (
+    PaymentCreateThrottle,
+    PaymentStatusThrottle,
+)
 
 
 logger = logging.getLogger(__name__)
@@ -26,6 +30,10 @@ logger = logging.getLogger(__name__)
 
 class CreatePaymentView(APIView):
     permission_classes = [IsAuthenticated]
+
+    throttle_classes = [
+        PaymentCreateThrottle,
+    ]
 
     def post(self, request):
         organization = request.user.organization
@@ -148,6 +156,10 @@ class CreatePaymentView(APIView):
 
 class PaymentStatusView(APIView):
     permission_classes = [IsAuthenticated]
+
+    throttle_classes = [
+        PaymentStatusThrottle,
+    ]
 
     def get(self, request, tx_ref):
         # --------------------------------------------------

@@ -19,6 +19,7 @@ from .serializers import (
     VehicleSerializer,
 )
 from .services import PLAN_LIMITS, can_add_vehicle
+from .throttles import RegistrationThrottle
 
 
 def apply_date_range(queryset, start_raw=None, end_raw=None, period=None):
@@ -68,6 +69,10 @@ class CreateUserView(generics.CreateAPIView):
     queryset = User.objects.all()
     serializer_class = UserSerializer
     permission_classes = [AllowAny]
+
+    throttle_classes = [
+        RegistrationThrottle,
+    ]
 
     @transaction.atomic
     def perform_create(self, serializer):

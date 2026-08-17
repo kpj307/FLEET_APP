@@ -168,20 +168,18 @@ INSTALLED_APPS = [
 MIDDLEWARE = [
     "django.middleware.security.SecurityMiddleware",
 
-    "corsheaders.middleware.CorsMiddleware",
+    # Request ID must be available to all downstream
+    # middleware and application code.
+    "api.middleware.RequestIDMiddleware",
 
     "django.contrib.sessions.middleware.SessionMiddleware",
-
     "django.middleware.common.CommonMiddleware",
-
     "django.middleware.csrf.CsrfViewMiddleware",
-
     "django.contrib.auth.middleware.AuthenticationMiddleware",
-
     "django.contrib.messages.middleware.MessageMiddleware",
-
     "django.middleware.clickjacking.XFrameOptionsMiddleware",
 
+    "corsheaders.middleware.CorsMiddleware",
     "whitenoise.middleware.WhiteNoiseMiddleware",
 ]
 
@@ -283,12 +281,15 @@ AUTH_PASSWORD_VALIDATORS = [
 
 REST_FRAMEWORK = {
     "DEFAULT_AUTHENTICATION_CLASSES": (
-        "rest_framework_simplejwt.authentication."
-        "JWTAuthentication",
+        "rest_framework_simplejwt.authentication.JWTAuthentication",
     ),
 
-    "DEFAULT_PERMISSION_CLASSES": (
+    "DEFAULT_PERMISSION_CLASSES": [
         "rest_framework.permissions.IsAuthenticated",
+    ],
+
+    "EXCEPTION_HANDLER": (
+        "api.exception_handlers.custom_exception_handler"
     ),
 
     "DEFAULT_THROTTLE_CLASSES": (
@@ -299,9 +300,14 @@ REST_FRAMEWORK = {
     "DEFAULT_THROTTLE_RATES": {
         "anon": "60/min",
         "user": "300/min",
+
+        "registration": "5/hour",
+        "login": "10/min",
+        "token_refresh": "20/min",
+        "payment_create": "10/hour",
+        "payment_status": "30/min",
     },
 }
-
 
 # ============================================================
 # JWT
@@ -327,6 +333,33 @@ SIMPLE_JWT = {
     "LEEWAY": 10,
 }
 
+# ============================================================
+# REDIS CACHE
+# ============================================================
+REDIS_URL = os.environ.get(
+    "REDIS_URL"
+)
+
+if REDIS_URL:
+    CACHES = {
+        "default": {
+            "BACKEND": (
+                "django.core.cache.backends.redis."
+                "RedisCache"
+            ),
+            "LOCATION": REDIS_URL,
+        }
+    }
+else:
+    CACHES = {
+        "default": {
+            "BACKEND": (
+                "django.core.cache.backends.locmem."
+                "LocMemCache"
+            ),
+            "LOCATION": "fleet-app-cache",
+        }
+    }
 
 # ============================================================
 # CORS
@@ -461,3 +494,80 @@ STORAGES = {
 # ============================================================
 
 DEFAULT_AUTO_FIELD = "django.db.models.BigAutoField"
+
+LOG_LEVEL = os.environ.get(
+    "DJANGO_LOG_LEVEL",
+    "INFO" if DEBUG else "WARNING",
+)
+
+LOG_DIR = BASE_DIR / "logs"
+LOG_DIR.mkdir(
+    parents=True,
+    exist_ok=True,
+)
+
+
+LOGGING = {
+    "version": 1,
+
+    "disable_existing_loggers": False,
+
+    "formatters": {
+        "json": {
+            "()": (
+                "api.logging_utils.JSONFormatter"
+            ),
+        },
+    },
+
+    "handlers": {
+        "console_json": {
+            "class": (
+                "logging.StreamHandler"
+            ),
+            "formatter": "json",
+        },
+
+        "file_json": {
+            "class": (
+                "logging.handlers."
+                "RotatingFileHandler"
+            ),
+            "filename": (
+                LOG_DIR / "application.log"
+            ),
+            "maxBytes": 10 * 1024 * 1024,
+            "backupCount": 5,
+            "formatter": "json",
+        },
+    },
+
+    "loggers": {
+        "api": {
+            "handlers": [
+                "console_json",
+                "file_json",
+            ],
+            "level": LOG_LEVEL,
+            "propagate": False,
+        },
+
+        "django.request": {
+            "handlers": [
+                "console_json",
+                "file_json",
+            ],
+            "level": "WARNING",
+            "propagate": False,
+        },
+
+        "django.security": {
+            "handlers": [
+                "console_json",
+                "file_json",
+            ],
+            "level": "WARNING",
+            "propagate": False,
+        },
+    },
+}

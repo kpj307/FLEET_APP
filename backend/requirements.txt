@@ -14,3 +14,4 @@ sqlparse
 tzdata
 whitenoise
 requests
+redis==8.1.0
