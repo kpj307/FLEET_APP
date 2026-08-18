@@ -23,25 +23,17 @@ load_dotenv()
 
 
 def env_bool(name, default=False):
-    """
-    Read a boolean environment variable safely.
-
-    Examples:
-        TRUE, true, 1, yes, on -> True
-        FALSE, false, 0, no, off -> False
-    """
     value = os.environ.get(name)
 
     if value is None:
         return default
 
     return value.strip().lower() in {
-        "true",
         "1",
+        "true",
         "yes",
         "on",
     }
-
 
 def env_list(name, default=""):
     """
@@ -60,16 +52,31 @@ def env_list(name, default=""):
 # ENVIRONMENT
 # ============================================================
 
-DEBUG = env_bool(
-    "DJANGO_DEBUG",
-    default=False,
-)
+# DEBUG = env_bool(
+#     "DJANGO_DEBUG",
+#     default=False,
+# )
 
-ENVIRONMENT = os.environ.get(
-    "DJANGO_ENVIRONMENT",
+DJANGO_ENV = os.environ.get(
+    "DJANGO_ENV",
     "development",
 ).strip().lower()
 
+IS_PRODUCTION = (
+    DJANGO_ENV == "production"
+)
+
+IS_TESTING = (
+    "test" in os.environ.get(
+        "DJANGO_SETTINGS_MODULE",
+        ""
+    ).lower()
+)
+
+DEBUG = env_bool(
+    "DEBUG",
+    DJANGO_ENV != "production",
+)
 
 # ============================================================
 # SECURITY
@@ -79,26 +86,35 @@ ENVIRONMENT = os.environ.get(
 # Generate a new production SECRET_KEY.
 #
 # Do NOT commit it to Git.
-SECRET_KEY = os.environ.get(
-    "DJANGO_SECRET_KEY",
-)
+SECRET_KEY = os.environ.get("SECRET_KEY")
 
 if not SECRET_KEY:
-    if DEBUG:
-        raise RuntimeError(
-            "DJANGO_SECRET_KEY must be configured."
-        )
-
     raise RuntimeError(
-        "DJANGO_SECRET_KEY is required in production."
+        "SECRET_KEY environment variable is required."
     )
 
+if IS_PRODUCTION and DEBUG:
+    raise RuntimeError(
+        "DEBUG must be False in production."
+    )
 
 ALLOWED_HOSTS = env_list(
     "DJANGO_ALLOWED_HOSTS",
     "localhost,127.0.0.1",
 )
 
+if IS_PRODUCTION:
+    if not ALLOWED_HOSTS:
+        raise RuntimeError(
+            "ALLOWED_HOSTS must be configured "
+            "in production."
+        )
+
+    if "*" in ALLOWED_HOSTS:
+        raise RuntimeError(
+            "Wildcard ALLOWED_HOSTS is not permitted "
+            "in production."
+        )
 
 # ============================================================
 # FRONTEND
@@ -365,6 +381,8 @@ else:
 # CORS
 # ============================================================
 
+CORS_ALLOW_ALL_ORIGINS = False
+
 CORS_ALLOWED_ORIGINS = env_list(
     "CORS_ALLOWED_ORIGINS",
     "http://localhost:5173,http://127.0.0.1:5173",
@@ -374,6 +392,15 @@ CORS_ALLOW_CREDENTIALS = env_bool(
     "CORS_ALLOW_CREDENTIALS",
     default=False,
 )
+
+if (
+    IS_PRODUCTION
+    and CORS_ALLOW_ALL_ORIGINS
+):
+    raise RuntimeError(
+        "CORS_ALLOW_ALL_ORIGINS must be False "
+        "in production."
+    )
 
 CORS_URLS_REGEX = r"^/api/.*$"
 
@@ -401,31 +428,51 @@ SECURE_REFERRER_POLICY = "same-origin"
 SECURE_CROSS_ORIGIN_OPENER_POLICY = "same-origin"
 
 
-# ------------------------------------------------------------
-# HTTPS settings
-# ------------------------------------------------------------
-#
-# Keep these disabled for local HTTP development.
-# Enable them in production behind HTTPS.
-#
+# --------------------------------------------------
+# HTTPS / browser security
+# --------------------------------------------------
 
 SECURE_SSL_REDIRECT = env_bool(
     "SECURE_SSL_REDIRECT",
-    default=False,
+    DJANGO_ENV == "production" and not IS_TESTING,
+)
+
+SECURE_PROXY_SSL_HEADER = (
+    "HTTP_X_FORWARDED_PROTO",
+    "https",
 )
 
 SESSION_COOKIE_SECURE = env_bool(
     "SESSION_COOKIE_SECURE",
-    default=False,
+    DJANGO_ENV == "production" and not IS_TESTING,
 )
 
 CSRF_COOKIE_SECURE = env_bool(
     "CSRF_COOKIE_SECURE",
-    default=False,
+    DJANGO_ENV == "production" and not IS_TESTING,
 )
 
+if IS_PRODUCTION:
+    if not SECURE_SSL_REDIRECT:
+        raise RuntimeError(
+            "SECURE_SSL_REDIRECT must be True "
+            "in production."
+        )
+
+    if not SESSION_COOKIE_SECURE:
+        raise RuntimeError(
+            "SESSION_COOKIE_SECURE must be True "
+            "in production."
+        )
+
+    if not CSRF_COOKIE_SECURE:
+        raise RuntimeError(
+            "CSRF_COOKIE_SECURE must be True "
+            "in production."
+        )
+
 SECURE_HSTS_SECONDS = int(
-    os.environ.get(
+    os.getenv(
         "SECURE_HSTS_SECONDS",
         "0",
     )
@@ -433,14 +480,57 @@ SECURE_HSTS_SECONDS = int(
 
 SECURE_HSTS_INCLUDE_SUBDOMAINS = env_bool(
     "SECURE_HSTS_INCLUDE_SUBDOMAINS",
-    default=False,
+    False,
 )
 
 SECURE_HSTS_PRELOAD = env_bool(
     "SECURE_HSTS_PRELOAD",
-    default=False,
+    False,
 )
 
+if IS_PRODUCTION:
+    if SECURE_HSTS_SECONDS < 31536000:
+        raise RuntimeError(
+            "SECURE_HSTS_SECONDS must be at least "
+            "31536000 in production."
+        )
+
+    if not SECURE_HSTS_INCLUDE_SUBDOMAINS:
+        raise RuntimeError(
+            "SECURE_HSTS_INCLUDE_SUBDOMAINS must be "
+            "True in production."
+        )
+
+SECURE_CONTENT_TYPE_NOSNIFF = True
+
+SECURE_REFERRER_POLICY = (
+    "strict-origin-when-cross-origin"
+)
+
+SECURE_CROSS_ORIGIN_OPENER_POLICY = (
+    "same-origin"
+)
+
+X_FRAME_OPTIONS = "DENY"
+
+if IS_PRODUCTION:
+    if not ALLOWED_HOSTS:
+        raise RuntimeError(
+            "ALLOWED_HOSTS must be configured "
+            "in production."
+        )
+
+    if not CORS_ALLOWED_ORIGINS:
+        raise RuntimeError(
+            "CORS_ALLOWED_ORIGINS must be configured "
+            "in production."
+        )
+
+    if not CSRF_TRUSTED_ORIGINS:
+        raise RuntimeError(
+            "CSRF_TRUSTED_ORIGINS must be configured "
+            "in production."
+        )
 
 # If deployed behind a reverse proxy such as nginx,
 # configure this only when the proxy is trusted to set
@@ -571,3 +661,83 @@ LOGGING = {
         },
     },
 }
+
+def validate_production_security():
+    if not IS_PRODUCTION:
+        return
+
+    if DEBUG:
+        raise RuntimeError(
+            "DEBUG must be False in production."
+        )
+
+    if not SECRET_KEY:
+        raise RuntimeError(
+            "SECRET_KEY is required in production."
+        )
+
+    if not ALLOWED_HOSTS:
+        raise RuntimeError(
+            "ALLOWED_HOSTS must be configured "
+            "in production."
+        )
+
+    if "*" in ALLOWED_HOSTS:
+        raise RuntimeError(
+            "Wildcard ALLOWED_HOSTS is not permitted "
+            "in production."
+        )
+
+    if CORS_ALLOW_ALL_ORIGINS:
+        raise RuntimeError(
+            "CORS_ALLOW_ALL_ORIGINS must be False "
+            "in production."
+        )
+
+    if not CORS_ALLOWED_ORIGINS:
+        raise RuntimeError(
+            "CORS_ALLOWED_ORIGINS must be configured "
+            "in production."
+        )
+
+    if not CSRF_TRUSTED_ORIGINS:
+        raise RuntimeError(
+            "CSRF_TRUSTED_ORIGINS must be configured "
+            "in production."
+        )
+
+    if not SECURE_SSL_REDIRECT:
+        raise RuntimeError(
+            "SECURE_SSL_REDIRECT must be True "
+            "in production."
+        )
+
+    if not SESSION_COOKIE_SECURE:
+        raise RuntimeError(
+            "SESSION_COOKIE_SECURE must be True "
+            "in production."
+        )
+
+    if not CSRF_COOKIE_SECURE:
+        raise RuntimeError(
+            "CSRF_COOKIE_SECURE must be True "
+            "in production."
+        )
+
+    if SECURE_HSTS_SECONDS < 31536000:
+        raise RuntimeError(
+            "SECURE_HSTS_SECONDS must be at least "
+            "31536000 in production."
+        )
+
+    if not SECURE_HSTS_INCLUDE_SUBDOMAINS:
+        raise RuntimeError(
+            "SECURE_HSTS_INCLUDE_SUBDOMAINS must be True "
+            "in production."
+        )
+
+    if not SECURE_HSTS_PRELOAD:
+        raise RuntimeError(
+            "SECURE_HSTS_PRELOAD must be True "
+            "in production."
+        )
