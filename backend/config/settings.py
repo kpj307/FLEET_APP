@@ -1,13 +1,14 @@
 """
 Django settings for config project.
 
-Production-hardened configuration with environment-based secrets
-and environment-specific security settings.
+Production-hardened configuration with environment-based
+secrets and environment-specific security settings.
 """
 
 from pathlib import Path
 from datetime import timedelta
 import os
+import sys
 
 from dotenv import load_dotenv
 import dj_database_url
@@ -19,39 +20,21 @@ import dj_database_url
 
 BASE_DIR = Path(__file__).resolve().parent.parent
 
-LOG_DIR = BASE_DIR / os.environ.get(
-    "LOG_DIR",
-    "logs",
-)
-
-LOG_DIR.mkdir(
-    parents=True,
-    exist_ok=True,
-)
-
-LOG_LEVEL = os.environ.get(
-    "LOG_LEVEL",
-    "INFO",
-).upper()
-
-LOG_MAX_BYTES = int(
-    os.environ.get(
-        "LOG_MAX_BYTES",
-        10 * 1024 * 1024,
-    )
-)
-
-LOG_BACKUP_COUNT = int(
-    os.environ.get(
-        "LOG_BACKUP_COUNT",
-        5,
-    )
-)
-
 load_dotenv()
 
 
+# ============================================================
+# ENVIRONMENT HELPERS
+# ============================================================
+
 def env_bool(name, default=False):
+    """
+    Read a boolean environment variable safely.
+
+    Examples:
+        true, 1, yes, on -> True
+        false, 0, no, off -> False
+    """
     value = os.environ.get(name)
 
     if value is None:
@@ -63,6 +46,7 @@ def env_bool(name, default=False):
         "yes",
         "on",
     }
+
 
 def env_list(name, default=""):
     """
@@ -81,11 +65,6 @@ def env_list(name, default=""):
 # ENVIRONMENT
 # ============================================================
 
-# DEBUG = env_bool(
-#     "DJANGO_DEBUG",
-#     default=False,
-# )
-
 DJANGO_ENV = os.environ.get(
     "DJANGO_ENV",
     "development",
@@ -95,26 +74,22 @@ IS_PRODUCTION = (
     DJANGO_ENV == "production"
 )
 
+# Detect Django test execution without relying on
+# DJANGO_SETTINGS_MODULE being changed.
 IS_TESTING = (
-    "test" in os.environ.get(
-        "DJANGO_SETTINGS_MODULE",
-        ""
-    ).lower()
+    "test" in sys.argv
 )
 
 DEBUG = env_bool(
-    "DEBUG",
+    "DJANGO_DEBUG",
     DJANGO_ENV != "production",
 )
 
+
 # ============================================================
-# SECURITY
+# SECURITY / SECRET KEY
 # ============================================================
 
-# IMPORTANT:
-# Generate a new production SECRET_KEY.
-#
-# Do NOT commit it to Git.
 SECRET_KEY = os.environ.get("SECRET_KEY")
 
 if not SECRET_KEY:
@@ -122,17 +97,22 @@ if not SECRET_KEY:
         "SECRET_KEY environment variable is required."
     )
 
-if IS_PRODUCTION and DEBUG:
+if IS_PRODUCTION and DEBUG and not IS_TESTING:
     raise RuntimeError(
         "DEBUG must be False in production."
     )
 
+
+# ============================================================
+# ALLOWED HOSTS
+# ============================================================
+
 ALLOWED_HOSTS = env_list(
-    "DJANGO_ALLOWED_HOSTS",
-    "localhost,127.0.0.1",
+    "ALLOWED_HOSTS",
 )
 
-if IS_PRODUCTION:
+if IS_PRODUCTION and not IS_TESTING:
+
     if not ALLOWED_HOSTS:
         raise RuntimeError(
             "ALLOWED_HOSTS must be configured "
@@ -144,6 +124,7 @@ if IS_PRODUCTION:
             "Wildcard ALLOWED_HOSTS is not permitted "
             "in production."
         )
+
 
 # ============================================================
 # FRONTEND
@@ -203,26 +184,34 @@ INSTALLED_APPS = [
     "django.contrib.staticfiles",
 
     "rest_framework",
-    "corsheaders",
-    "api",
-
     "rest_framework_simplejwt.token_blacklist",
+
+    "corsheaders",
+
+    "api",
 ]
 
 
 MIDDLEWARE = [
     "django.middleware.security.SecurityMiddleware",
 
+    "whitenoise.middleware.WhiteNoiseMiddleware",
+
     "api.middleware.RequestContextMiddleware",
 
     "django.contrib.sessions.middleware.SessionMiddleware",
+
     "django.middleware.common.CommonMiddleware",
+
     "django.middleware.csrf.CsrfViewMiddleware",
+
     "django.contrib.auth.middleware.AuthenticationMiddleware",
+
     "django.contrib.messages.middleware.MessageMiddleware",
+
     "django.middleware.clickjacking.XFrameOptionsMiddleware",
+
     "corsheaders.middleware.CorsMiddleware",
-    "whitenoise.middleware.WhiteNoiseMiddleware",
 ]
 
 
@@ -265,17 +254,21 @@ WSGI_APPLICATION = "config.wsgi.application"
 # ============================================================
 
 DATABASE_URL = os.environ.get(
-    "DATABASE_URL",
+    "DATABASE_URL"
 )
 
 if DATABASE_URL:
     DATABASES = {
-        "default": dj_database_url.config(
-            default=DATABASE_URL,
+        "default": dj_database_url.parse(
+            DATABASE_URL,
             conn_max_age=600,
-            conn_health_checks=True,
+            ssl_require=(
+                IS_PRODUCTION
+                and not IS_TESTING
+            ),
         )
     }
+
 else:
     DATABASES = {
         "default": {
@@ -323,7 +316,8 @@ AUTH_PASSWORD_VALIDATORS = [
 
 REST_FRAMEWORK = {
     "DEFAULT_AUTHENTICATION_CLASSES": (
-        "rest_framework_simplejwt.authentication.JWTAuthentication",
+        "rest_framework_simplejwt.authentication."
+        "JWTAuthentication",
     ),
 
     "DEFAULT_PERMISSION_CLASSES": [
@@ -331,7 +325,8 @@ REST_FRAMEWORK = {
     ],
 
     "EXCEPTION_HANDLER": (
-        "api.exception_handlers.custom_exception_handler"
+        "api.exception_handlers."
+        "custom_exception_handler"
     ),
 
     "DEFAULT_THROTTLE_CLASSES": (
@@ -346,10 +341,12 @@ REST_FRAMEWORK = {
         "registration": "5/hour",
         "login": "10/min",
         "token_refresh": "20/min",
+
         "payment_create": "10/hour",
         "payment_status": "30/min",
     },
 }
+
 
 # ============================================================
 # JWT
@@ -370,38 +367,48 @@ SIMPLE_JWT = {
 
     "UPDATE_LAST_LOGIN": True,
 
-    "AUTH_HEADER_TYPES": ("Bearer",),
+    "AUTH_HEADER_TYPES": (
+        "Bearer",
+    ),
 
     "LEEWAY": 10,
 }
 
+
 # ============================================================
 # REDIS CACHE
 # ============================================================
+
 REDIS_URL = os.environ.get(
     "REDIS_URL"
 )
 
 if REDIS_URL:
+
     CACHES = {
         "default": {
             "BACKEND": (
                 "django.core.cache.backends.redis."
                 "RedisCache"
             ),
+
             "LOCATION": REDIS_URL,
         }
     }
+
 else:
+
     CACHES = {
         "default": {
             "BACKEND": (
                 "django.core.cache.backends.locmem."
                 "LocMemCache"
             ),
+
             "LOCATION": "fleet-app-cache",
         }
     }
+
 
 # ============================================================
 # CORS
@@ -411,7 +418,7 @@ CORS_ALLOW_ALL_ORIGINS = False
 
 CORS_ALLOWED_ORIGINS = env_list(
     "CORS_ALLOWED_ORIGINS",
-    "http://localhost:5173,http://127.0.0.1:5173",
+    "http://localhost:5173",
 )
 
 CORS_ALLOW_CREDENTIALS = env_bool(
@@ -421,12 +428,14 @@ CORS_ALLOW_CREDENTIALS = env_bool(
 
 if (
     IS_PRODUCTION
+    and not IS_TESTING
     and CORS_ALLOW_ALL_ORIGINS
 ):
     raise RuntimeError(
         "CORS_ALLOW_ALL_ORIGINS must be False "
         "in production."
     )
+
 
 CORS_URLS_REGEX = r"^/api/.*$"
 
@@ -437,48 +446,111 @@ CORS_URLS_REGEX = r"^/api/.*$"
 
 CSRF_TRUSTED_ORIGINS = env_list(
     "CSRF_TRUSTED_ORIGINS",
-    "http://localhost:5173,http://127.0.0.1:5173",
 )
 
 
 # ============================================================
-# SECURITY HEADERS
+# HTTPS / BROWSER SECURITY
 # ============================================================
 
-SECURE_CONTENT_TYPE_NOSNIFF = True
+if IS_PRODUCTION and not IS_TESTING:
+    # Production security is mandatory.
+    # Do not allow environment variables to disable these.
 
-X_FRAME_OPTIONS = "DENY"
+    SECURE_SSL_REDIRECT = True
 
-SECURE_REFERRER_POLICY = "same-origin"
+    SESSION_COOKIE_SECURE = True
 
-SECURE_CROSS_ORIGIN_OPENER_POLICY = "same-origin"
+    CSRF_COOKIE_SECURE = True
 
+    SECURE_HSTS_SECONDS = 31536000
 
-# --------------------------------------------------
-# HTTPS / browser security
-# --------------------------------------------------
+    SECURE_HSTS_INCLUDE_SUBDOMAINS = True
 
-SECURE_SSL_REDIRECT = env_bool(
-    "SECURE_SSL_REDIRECT",
-    DJANGO_ENV == "production" and not IS_TESTING,
-)
+    SECURE_HSTS_PRELOAD = True
+
+else:
+    # Development/test configuration.
+
+    SECURE_SSL_REDIRECT = env_bool(
+        "SECURE_SSL_REDIRECT",
+        False,
+    )
+
+    SESSION_COOKIE_SECURE = env_bool(
+        "SESSION_COOKIE_SECURE",
+        False,
+    )
+
+    CSRF_COOKIE_SECURE = env_bool(
+        "CSRF_COOKIE_SECURE",
+        False,
+    )
+
+    SECURE_HSTS_SECONDS = int(
+        os.environ.get(
+            "SECURE_HSTS_SECONDS",
+            "0",
+        )
+    )
+
+    SECURE_HSTS_INCLUDE_SUBDOMAINS = env_bool(
+        "SECURE_HSTS_INCLUDE_SUBDOMAINS",
+        False,
+    )
+
+    SECURE_HSTS_PRELOAD = env_bool(
+        "SECURE_HSTS_PRELOAD",
+        False,
+    )
+
 
 SECURE_PROXY_SSL_HEADER = (
     "HTTP_X_FORWARDED_PROTO",
     "https",
 )
 
-SESSION_COOKIE_SECURE = env_bool(
-    "SESSION_COOKIE_SECURE",
-    DJANGO_ENV == "production" and not IS_TESTING,
+SECURE_CONTENT_TYPE_NOSNIFF = True
+
+SECURE_REFERRER_POLICY = (
+    "strict-origin-when-cross-origin"
 )
 
-CSRF_COOKIE_SECURE = env_bool(
-    "CSRF_COOKIE_SECURE",
-    DJANGO_ENV == "production" and not IS_TESTING,
+SECURE_CROSS_ORIGIN_OPENER_POLICY = (
+    "same-origin"
 )
 
-if IS_PRODUCTION:
+X_FRAME_OPTIONS = "DENY"
+
+
+# ============================================================
+# PRODUCTION SECURITY VALIDATION
+# ============================================================
+
+if IS_PRODUCTION and not IS_TESTING:
+
+    if DEBUG:
+        raise RuntimeError(
+            "DEBUG must be False in production."
+        )
+
+    if not SECRET_KEY:
+        raise RuntimeError(
+            "SECRET_KEY is required in production."
+        )
+
+    if not ALLOWED_HOSTS:
+        raise RuntimeError(
+            "ALLOWED_HOSTS must be configured "
+            "in production."
+        )
+
+    if "*" in ALLOWED_HOSTS:
+        raise RuntimeError(
+            "Wildcard ALLOWED_HOSTS is not permitted "
+            "in production."
+        )
+
     if not SECURE_SSL_REDIRECT:
         raise RuntimeError(
             "SECURE_SSL_REDIRECT must be True "
@@ -497,24 +569,6 @@ if IS_PRODUCTION:
             "in production."
         )
 
-SECURE_HSTS_SECONDS = int(
-    os.getenv(
-        "SECURE_HSTS_SECONDS",
-        "0",
-    )
-)
-
-SECURE_HSTS_INCLUDE_SUBDOMAINS = env_bool(
-    "SECURE_HSTS_INCLUDE_SUBDOMAINS",
-    False,
-)
-
-SECURE_HSTS_PRELOAD = env_bool(
-    "SECURE_HSTS_PRELOAD",
-    False,
-)
-
-if IS_PRODUCTION:
     if SECURE_HSTS_SECONDS < 31536000:
         raise RuntimeError(
             "SECURE_HSTS_SECONDS must be at least "
@@ -527,22 +581,9 @@ if IS_PRODUCTION:
             "True in production."
         )
 
-SECURE_CONTENT_TYPE_NOSNIFF = True
-
-SECURE_REFERRER_POLICY = (
-    "strict-origin-when-cross-origin"
-)
-
-SECURE_CROSS_ORIGIN_OPENER_POLICY = (
-    "same-origin"
-)
-
-X_FRAME_OPTIONS = "DENY"
-
-if IS_PRODUCTION:
-    if not ALLOWED_HOSTS:
+    if not SECURE_HSTS_PRELOAD:
         raise RuntimeError(
-            "ALLOWED_HOSTS must be configured "
+            "SECURE_HSTS_PRELOAD must be True "
             "in production."
         )
 
@@ -557,15 +598,6 @@ if IS_PRODUCTION:
             "CSRF_TRUSTED_ORIGINS must be configured "
             "in production."
         )
-
-# If deployed behind a reverse proxy such as nginx,
-# configure this only when the proxy is trusted to set
-# X-Forwarded-Proto correctly.
-#
-# SECURE_PROXY_SSL_HEADER = (
-#     "HTTP_X_FORWARDED_PROTO",
-#     "https",
-# )
 
 
 # ============================================================
@@ -589,6 +621,7 @@ STATIC_URL = "/static/"
 
 STATIC_ROOT = BASE_DIR / "staticfiles"
 
+
 STORAGES = {
     "default": {
         "BACKEND": (
@@ -596,6 +629,7 @@ STORAGES = {
             "FileSystemStorage"
         ),
     },
+
     "staticfiles": {
         "BACKEND": (
             "whitenoise.storage."
@@ -609,18 +643,14 @@ STORAGES = {
 # DEFAULT PRIMARY KEY
 # ============================================================
 
-DEFAULT_AUTO_FIELD = "django.db.models.BigAutoField"
-
-LOG_LEVEL = os.environ.get(
-    "DJANGO_LOG_LEVEL",
-    "INFO" if DEBUG else "WARNING",
+DEFAULT_AUTO_FIELD = (
+    "django.db.models.BigAutoField"
 )
 
-LOG_DIR = BASE_DIR / "logs"
-LOG_DIR.mkdir(
-    parents=True,
-    exist_ok=True,
-)
+
+# ============================================================
+# APPLICATION METADATA
+# ============================================================
 
 APP_NAME = os.environ.get(
     "APP_NAME",
@@ -632,6 +662,44 @@ APP_VERSION = os.environ.get(
     "1.0.0",
 )
 
+
+# ============================================================
+# OBSERVABILITY / LOGGING
+# ============================================================
+
+LOG_DIR = BASE_DIR / os.environ.get(
+    "LOG_DIR",
+    "logs",
+)
+
+LOG_DIR.mkdir(
+    parents=True,
+    exist_ok=True,
+)
+
+
+LOG_LEVEL = os.environ.get(
+    "LOG_LEVEL",
+    "INFO" if DEBUG else "WARNING",
+).upper()
+
+
+LOG_MAX_BYTES = int(
+    os.environ.get(
+        "LOG_MAX_BYTES",
+        10 * 1024 * 1024,
+    )
+)
+
+
+LOG_BACKUP_COUNT = int(
+    os.environ.get(
+        "LOG_BACKUP_COUNT",
+        5,
+    )
+)
+
+
 SLOW_REQUEST_THRESHOLD_MS = int(
     os.environ.get(
         "SLOW_REQUEST_THRESHOLD_MS",
@@ -639,6 +707,10 @@ SLOW_REQUEST_THRESHOLD_MS = int(
     )
 )
 
-LOGGING_CONFIG = "logging.config.dictConfig"
+
+LOGGING_CONFIG = (
+    "logging.config.dictConfig"
+)
+
 
 from .logging import LOGGING
