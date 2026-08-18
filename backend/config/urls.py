@@ -3,10 +3,15 @@ from django.contrib import admin
 from django.urls import include, path
 
 from api.views import CreateUserView
+from api.version_views import VersionView
 
 from api.auth_views import (
     ThrottledTokenObtainPairView,
     ThrottledTokenRefreshView,
+)
+from api.health_views import (
+    HealthCheckView,
+    ReadinessCheckView,
 )
 
 
@@ -38,8 +43,27 @@ urlpatterns = [
         "api/",
         include("api.urls"),
     ),
+
+    path(
+        "health/",
+        HealthCheckView.as_view(),
+        name="health",
+    ),
+
+    path(
+        "ready/",
+        ReadinessCheckView.as_view(),
+        name="ready",
+    ),
+
+    path(
+        "version/",
+        VersionView.as_view(),
+        name="version",
+    ),
 ]
 
+handler404 = "api.exception_handlers.api_404_handler"
 
 if settings.DEBUG:
     urlpatterns += [

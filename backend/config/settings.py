@@ -19,6 +19,35 @@ import dj_database_url
 
 BASE_DIR = Path(__file__).resolve().parent.parent
 
+LOG_DIR = BASE_DIR / os.environ.get(
+    "LOG_DIR",
+    "logs",
+)
+
+LOG_DIR.mkdir(
+    parents=True,
+    exist_ok=True,
+)
+
+LOG_LEVEL = os.environ.get(
+    "LOG_LEVEL",
+    "INFO",
+).upper()
+
+LOG_MAX_BYTES = int(
+    os.environ.get(
+        "LOG_MAX_BYTES",
+        10 * 1024 * 1024,
+    )
+)
+
+LOG_BACKUP_COUNT = int(
+    os.environ.get(
+        "LOG_BACKUP_COUNT",
+        5,
+    )
+)
+
 load_dotenv()
 
 
@@ -184,9 +213,7 @@ INSTALLED_APPS = [
 MIDDLEWARE = [
     "django.middleware.security.SecurityMiddleware",
 
-    # Request ID must be available to all downstream
-    # middleware and application code.
-    "api.middleware.RequestIDMiddleware",
+    "api.middleware.RequestContextMiddleware",
 
     "django.contrib.sessions.middleware.SessionMiddleware",
     "django.middleware.common.CommonMiddleware",
@@ -194,7 +221,6 @@ MIDDLEWARE = [
     "django.contrib.auth.middleware.AuthenticationMiddleware",
     "django.contrib.messages.middleware.MessageMiddleware",
     "django.middleware.clickjacking.XFrameOptionsMiddleware",
-
     "corsheaders.middleware.CorsMiddleware",
     "whitenoise.middleware.WhiteNoiseMiddleware",
 ]
@@ -596,148 +622,23 @@ LOG_DIR.mkdir(
     exist_ok=True,
 )
 
+APP_NAME = os.environ.get(
+    "APP_NAME",
+    "Fleet App",
+)
 
-LOGGING = {
-    "version": 1,
+APP_VERSION = os.environ.get(
+    "APP_VERSION",
+    "1.0.0",
+)
 
-    "disable_existing_loggers": False,
+SLOW_REQUEST_THRESHOLD_MS = int(
+    os.environ.get(
+        "SLOW_REQUEST_THRESHOLD_MS",
+        "1000",
+    )
+)
 
-    "formatters": {
-        "json": {
-            "()": (
-                "api.logging_utils.JSONFormatter"
-            ),
-        },
-    },
+LOGGING_CONFIG = "logging.config.dictConfig"
 
-    "handlers": {
-        "console_json": {
-            "class": (
-                "logging.StreamHandler"
-            ),
-            "formatter": "json",
-        },
-
-        "file_json": {
-            "class": (
-                "logging.handlers."
-                "RotatingFileHandler"
-            ),
-            "filename": (
-                LOG_DIR / "application.log"
-            ),
-            "maxBytes": 10 * 1024 * 1024,
-            "backupCount": 5,
-            "formatter": "json",
-        },
-    },
-
-    "loggers": {
-        "api": {
-            "handlers": [
-                "console_json",
-                "file_json",
-            ],
-            "level": LOG_LEVEL,
-            "propagate": False,
-        },
-
-        "django.request": {
-            "handlers": [
-                "console_json",
-                "file_json",
-            ],
-            "level": "WARNING",
-            "propagate": False,
-        },
-
-        "django.security": {
-            "handlers": [
-                "console_json",
-                "file_json",
-            ],
-            "level": "WARNING",
-            "propagate": False,
-        },
-    },
-}
-
-def validate_production_security():
-    if not IS_PRODUCTION:
-        return
-
-    if DEBUG:
-        raise RuntimeError(
-            "DEBUG must be False in production."
-        )
-
-    if not SECRET_KEY:
-        raise RuntimeError(
-            "SECRET_KEY is required in production."
-        )
-
-    if not ALLOWED_HOSTS:
-        raise RuntimeError(
-            "ALLOWED_HOSTS must be configured "
-            "in production."
-        )
-
-    if "*" in ALLOWED_HOSTS:
-        raise RuntimeError(
-            "Wildcard ALLOWED_HOSTS is not permitted "
-            "in production."
-        )
-
-    if CORS_ALLOW_ALL_ORIGINS:
-        raise RuntimeError(
-            "CORS_ALLOW_ALL_ORIGINS must be False "
-            "in production."
-        )
-
-    if not CORS_ALLOWED_ORIGINS:
-        raise RuntimeError(
-            "CORS_ALLOWED_ORIGINS must be configured "
-            "in production."
-        )
-
-    if not CSRF_TRUSTED_ORIGINS:
-        raise RuntimeError(
-            "CSRF_TRUSTED_ORIGINS must be configured "
-            "in production."
-        )
-
-    if not SECURE_SSL_REDIRECT:
-        raise RuntimeError(
-            "SECURE_SSL_REDIRECT must be True "
-            "in production."
-        )
-
-    if not SESSION_COOKIE_SECURE:
-        raise RuntimeError(
-            "SESSION_COOKIE_SECURE must be True "
-            "in production."
-        )
-
-    if not CSRF_COOKIE_SECURE:
-        raise RuntimeError(
-            "CSRF_COOKIE_SECURE must be True "
-            "in production."
-        )
-
-    if SECURE_HSTS_SECONDS < 31536000:
-        raise RuntimeError(
-            "SECURE_HSTS_SECONDS must be at least "
-            "31536000 in production."
-        )
-
-    if not SECURE_HSTS_INCLUDE_SUBDOMAINS:
-        raise RuntimeError(
-            "SECURE_HSTS_INCLUDE_SUBDOMAINS must be True "
-            "in production."
-        )
-
-    if not SECURE_HSTS_PRELOAD:
-        raise RuntimeError(
-            "SECURE_HSTS_PRELOAD must be True "
-            "in production."
-        )
+from .logging import LOGGING

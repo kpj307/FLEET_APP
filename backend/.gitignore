@@ -13,30 +13,3 @@ __pycache__/
 staticfiles/
 
 media/
-
-
-$env:DJANGO_ENV="production"
-$env:DEBUG="False"
-$env:SECRET_KEY="33ibm@pk=+6aj1gee#hkudvu79sbw32_rl970!g*p%+t-77d)9"
-$env:ALLOWED_HOSTS="http://127.0.0.1:8000/"
-$env:CORS_ALLOWED_ORIGINS="https://127.0.0.1:5173"
-$env:CSRF_TRUSTED_ORIGINS="https://127.0.0.1:5173"
-$env:SECURE_SSL_REDIRECT="True"
-$env:SESSION_COOKIE_SECURE="True"
-$env:CSRF_COOKIE_SECURE="True"
-$env:SECURE_HSTS_SECONDS="31536000"
-$env:SECURE_HSTS_INCLUDE_SUBDOMAINS="True"
-$env:SECURE_HSTS_PRELOAD="True"
-
-Remove-Item Env:DJANGO_ENV -ErrorAction SilentlyContinue
-Remove-Item Env:DEBUG -ErrorAction SilentlyContinue
-Remove-Item Env:SECRET_KEY -ErrorAction SilentlyContinue
-Remove-Item Env:ALLOWED_HOSTS -ErrorAction SilentlyContinue
-Remove-Item Env:CORS_ALLOWED_ORIGINS -ErrorAction SilentlyContinue
-Remove-Item Env:CSRF_TRUSTED_ORIGINS -ErrorAction SilentlyContinue
-Remove-Item Env:SECURE_SSL_REDIRECT -ErrorAction SilentlyContinue
-Remove-Item Env:SESSION_COOKIE_SECURE -ErrorAction SilentlyContinue
-Remove-Item Env:CSRF_COOKIE_SECURE -ErrorAction SilentlyContinue
-Remove-Item Env:SECURE_HSTS_SECONDS -ErrorAction SilentlyContinue
-Remove-Item Env:SECURE_HSTS_INCLUDE_SUBDOMAINS -ErrorAction SilentlyContinue
-Remove-Item Env:SECURE_HSTS_PRELOAD -ErrorAction SilentlyContinue

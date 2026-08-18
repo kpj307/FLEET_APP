@@ -1,4 +1,5 @@
 import logging
+from django.http import JsonResponse
 
 from rest_framework import status
 from rest_framework.response import Response
@@ -223,3 +224,42 @@ def _get_error_message(data):
         return "Request validation failed."
 
     return "Request could not be processed."
+
+
+def api_404_handler(request, exception=None):
+    request_id = getattr(
+        request,
+        "request_id",
+        None,
+    )
+
+    if not request_id:
+        request_id = request.META.get(
+            "HTTP_X_REQUEST_ID"
+        )
+
+    error = {
+        "code": "NOT_FOUND",
+        "message": "Not found.",
+    }
+
+    if request_id:
+        error["request_id"] = request_id
+
+    logger.warning(
+        "API resource not found",
+        extra={
+            "request_id": request_id,
+            "method": request.method,
+            "path": request.path,
+            "status_code": 404,
+            "error_code": "NOT_FOUND",
+        },
+    )
+
+    return JsonResponse(
+        {
+            "error": error,
+        },
+        status=404,
+    )
