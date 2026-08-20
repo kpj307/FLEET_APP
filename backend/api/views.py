@@ -20,6 +20,7 @@ from .serializers import (
 )
 from .services import PLAN_LIMITS, can_add_vehicle
 from .throttles import RegistrationThrottle
+from .audit import log_audit_event
 
 
 def apply_date_range(queryset, start_raw=None, end_raw=None, period=None):
@@ -69,14 +70,18 @@ class CreateUserView(generics.CreateAPIView):
     queryset = User.objects.all()
     serializer_class = UserSerializer
     permission_classes = [AllowAny]
-
-    throttle_classes = [
-        RegistrationThrottle,
-    ]
+    throttle_classes = [RegistrationThrottle]
 
     @transaction.atomic
     def perform_create(self, serializer):
-        serializer.save()
+        user = serializer.save()
+
+        log_audit_event(
+            event="user.registered",
+            request=self.request,
+            user=user,
+            success=True,
+        )
 
 class OrganizationView(APIView):
     permission_classes = [IsAuthenticated]

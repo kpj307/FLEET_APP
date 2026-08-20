@@ -1,9 +1,12 @@
 import logging
+
 from django.http import JsonResponse
 
 from rest_framework import status
 from rest_framework.response import Response
 from rest_framework.views import exception_handler
+
+from .audit import log_audit_event
 
 
 logger = logging.getLogger("api")
@@ -101,6 +104,37 @@ def custom_exception_handler(exc, context):
 
     status_code = response.status_code
 
+    # ---------------------------------------------------------
+    # Authorization failure audit
+    # ---------------------------------------------------------
+
+    if status_code == status.HTTP_403_FORBIDDEN:
+        authenticated_user = getattr(
+            request,
+            "user",
+            None,
+        )
+
+        log_audit_event(
+            event="authorization.failed",
+            request=request,
+            user=authenticated_user,
+            user_id=(
+                authenticated_user.pk
+                if authenticated_user is not None
+                and getattr(
+                    authenticated_user,
+                    "is_authenticated",
+                    False,
+                )
+                else None
+            ),
+            success=False,
+            status_code=status_code,
+            error_code="FORBIDDEN",
+            view=view_name,
+        )
+
     if status_code >= 500:
         logger.error(
             "API server error",
@@ -109,9 +143,7 @@ def custom_exception_handler(exc, context):
                 "method": method,
                 "path": path,
                 "status_code": status_code,
-                "error_code": (
-                    "API_SERVER_ERROR"
-                ),
+                "error_code": "API_SERVER_ERROR",
                 "view": view_name,
             },
         )
@@ -124,9 +156,7 @@ def custom_exception_handler(exc, context):
                 "method": method,
                 "path": path,
                 "status_code": status_code,
-                "error_code": (
-                    "API_CLIENT_ERROR"
-                ),
+                "error_code": "API_CLIENT_ERROR",
                 "view": view_name,
             },
         )
@@ -174,7 +204,6 @@ def custom_exception_handler(exc, context):
         }
 
     return response
-
 
 def _get_error_code(status_code):
     return {
@@ -224,7 +253,6 @@ def _get_error_message(data):
         return "Request validation failed."
 
     return "Request could not be processed."
-
 
 def api_404_handler(request, exception=None):
     request_id = getattr(

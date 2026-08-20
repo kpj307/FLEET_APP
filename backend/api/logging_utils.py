@@ -1,51 +1,13 @@
-import json
+﻿import json
 import logging
 from datetime import date, datetime
 from decimal import Decimal
-
-
-SENSITIVE_KEYS = {
-    "password",
-    "token",
-    "access",
-    "refresh",
-    "authorization",
-    "cookie",
-    "secret",
-    "secret_key",
-    "api_key",
-    "private_key",
-    "card_number",
-    "cvv",
-}
-
-
-def _safe_value(value):
-    if isinstance(value, (datetime, date)):
-        return value.isoformat()
-
-    if isinstance(value, Decimal):
-        return str(value)
-
-    if isinstance(value, dict):
-        return {
-            str(key): _safe_value(item)
-            for key, item in value.items()
-            if str(key).lower() not in SENSITIVE_KEYS
-        }
-
-    if isinstance(value, (list, tuple)):
-        return [_safe_value(item) for item in value]
-
-    if isinstance(value, (str, int, float, bool)) or value is None:
-        return value
-
-    return str(value)
+from uuid import UUID
 
 
 class JSONFormatter(logging.Formatter):
     """
-    Structured JSON formatter for production logs.
+    Format log records as structured JSON.
     """
 
     def format(self, record):
@@ -56,36 +18,96 @@ class JSONFormatter(logging.Formatter):
             "message": record.getMessage(),
         }
 
-        if hasattr(record, "request_id"):
-            payload["request_id"] = record.request_id
+        # Include structured logging fields.
+        for key in (
+            "request_id",
+            "method",
+            "path",
+            "status_code",
+            "duration_ms",
+            "error_code",
+            "event",
+            "success",
+            "user_id",
+            "view",
+        ):
+            value = getattr(record, key, None)
 
-        if hasattr(record, "method"):
-            payload["method"] = record.method
-
-        if hasattr(record, "path"):
-            payload["path"] = record.path
-
-        if hasattr(record, "status_code"):
-            payload["status_code"] = record.status_code
-
-        if hasattr(record, "user_id"):
-            payload["user_id"] = record.user_id
-
-        if hasattr(record, "organization_id"):
-            payload["organization_id"] = record.organization_id
-
-        if hasattr(record, "error_code"):
-            payload["error_code"] = record.error_code
-
-        if hasattr(record, "exception_type"):
-            payload["exception_type"] = record.exception_type
+            if value is not None:
+                payload[key] = value
 
         if record.exc_info:
-            payload["exception"] = self.formatException(
-                record.exc_info
-            )
+            payload["exception"] = self.formatException(record.exc_info)
 
         return json.dumps(
-            _safe_value(payload),
-            ensure_ascii=False,
+            payload,
+            default=self._json_default,
         )
+
+    @staticmethod
+    def _json_default(value):
+        if isinstance(value, (datetime, date)):
+            return value.isoformat()
+
+        if isinstance(value, Decimal):
+            return str(value)
+
+        if isinstance(value, UUID):
+            return str(value)
+
+        return str(value)
+
+"""
+Utilities for safely preparing data for logs.
+"""
+
+SENSITIVE_KEYS = {
+    "password",
+    "password1",
+    "password2",
+    "token",
+    "access_token",
+    "refresh_token",
+    "authorization",
+    "api_key",
+    "secret",
+    "secret_key",
+    "signature",
+    "flutterwave_secret_hash",
+    "card_number",
+    "cvv",
+}
+
+REDACTED_VALUE = "[REDACTED]"
+
+
+def sanitize_log_data(data):
+    """
+    Recursively redact sensitive values from dictionaries,
+    lists, and tuples.
+    """
+
+    if isinstance(data, dict):
+        sanitized = {}
+
+        for key, value in data.items():
+            if str(key).lower() in SENSITIVE_KEYS:
+                sanitized[key] = REDACTED_VALUE
+            else:
+                sanitized[key] = sanitize_log_data(value)
+
+        return sanitized
+
+    if isinstance(data, list):
+        return [
+            sanitize_log_data(value)
+            for value in data
+        ]
+
+    if isinstance(data, tuple):
+        return tuple(
+            sanitize_log_data(value)
+            for value in data
+        )
+
+    return data

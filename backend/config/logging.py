@@ -123,6 +123,12 @@ LOGGING = {
             "propagate": False,
         },
 
+        "api.audit": {
+            "handlers": ["console"],
+            "level": "INFO",
+            "propagate": False,
+        },
+
         "api.security": {
             "handlers": [
                 "console",

@@ -25,6 +25,13 @@ class RegistrationThrottleTests(APITestCase):
     def tearDown(self):
         cache.clear()
 
+    def registration_payload(self, index):
+        return {
+            "username": f"throttle-user-{index}",
+            "password": "StrongPass123!",
+            "business_name": f"Throttle Business {index}",
+        }
+
     @patch.object(
         RegistrationThrottle,
         "THROTTLE_RATES",
@@ -35,16 +42,11 @@ class RegistrationThrottleTests(APITestCase):
     def test_registration_is_rate_limited(self):
         url = reverse("register")
 
+        # First two valid registration requests are allowed.
         for index in range(2):
             response = self.client.post(
                 url,
-                {
-                    "username": f"throttle-user-{index}",
-                    "email": (
-                        f"throttle-{index}@example.com"
-                    ),
-                    "password": "StrongPass123!",
-                },
+                self.registration_payload(index),
                 format="json",
             )
 
@@ -53,13 +55,10 @@ class RegistrationThrottleTests(APITestCase):
                 status.HTTP_429_TOO_MANY_REQUESTS,
             )
 
+        # Third valid registration request must be throttled.
         response = self.client.post(
             url,
-            {
-                "username": "throttle-user-3",
-                "email": "throttle-3@example.com",
-                "password": "StrongPass123!",
-            },
+            self.registration_payload(2),
             format="json",
         )
 
@@ -67,7 +66,7 @@ class RegistrationThrottleTests(APITestCase):
             response.status_code,
             status.HTTP_429_TOO_MANY_REQUESTS,
         )
-
+        
 
 class LoginThrottleTests(APITestCase):
     def setUp(self):

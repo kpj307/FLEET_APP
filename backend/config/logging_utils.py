@@ -37,6 +37,7 @@ class StructuredJSONFormatter(
         "message",
     }
 
+
     def format(self, record):
         payload = {
             "timestamp": (
@@ -77,3 +78,5 @@ class StructuredJSONFormatter(
             payload,
             default=str,
         )
+
+    

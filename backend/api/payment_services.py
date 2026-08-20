@@ -7,11 +7,108 @@ from django.conf import settings
 from django.utils import timezone
 from django.db import transaction
 
+from .audit import log_audit_event
 from .models import Payment, Subscription
 
 
 FLUTTERWAVE_BASE_URL = "https://api.flutterwave.com/v3"
 
+def audit_payment_status_change(
+    *,
+    payment,
+    previous_status,
+    new_status,
+    request=None,
+    **extra,
+):
+    """
+    Record a payment lifecycle status change.
+
+    Only business-safe payment metadata is included.
+
+    Never include:
+        - provider_payload
+        - secret keys
+        - authorization headers
+        - payment signatures
+        - card numbers
+        - CVV
+        - access/refresh tokens
+    """
+
+    if previous_status == new_status:
+        return
+
+    log_audit_event(
+        event=f"payment.{new_status}",
+        success=new_status == "successful",
+        request=request,
+        user_id=payment.organization.owner_id,
+        organization_id=payment.organization_id,
+        subscription_id=payment.subscription_id,
+        payment_id=payment.id,
+
+        # Safe payment identifiers
+        tx_ref=payment.tx_ref,
+        provider_transaction_id=(
+            payment.provider_transaction_id
+        ),
+        provider_reference=(
+            payment.provider_reference
+        ),
+
+        # Payment business information
+        amount=str(payment.amount),
+        currency=payment.currency,
+        plan=payment.plan,
+        billing_cycle=payment.billing_cycle,
+
+        # Lifecycle information
+        previous_status=previous_status,
+        new_status=new_status,
+
+        **extra,
+    )
+    
+def set_payment_status(
+    payment,
+    new_status,
+    *,
+    request=None,
+    update_fields=None,
+):
+    if payment.status == new_status:
+        return payment
+
+    if new_status == "successful":
+        if not payment.provider_transaction_id:
+            raise ValueError(
+                "Successful payments require "
+                "provider_transaction_id."
+            )
+
+    previous_status = payment.status
+
+    payment.status = new_status
+
+    fields = list(update_fields or [])
+
+    if "status" not in fields:
+        fields.append("status")
+
+    if "updated_at" not in fields:
+        fields.append("updated_at")
+
+    payment.save(update_fields=fields)
+
+    audit_payment_status_change(
+        payment=payment,
+        previous_status=previous_status,
+        new_status=new_status,
+        request=request,
+    )
+
+    return payment
 
 def flutterwave_headers():
     secret = getattr(
@@ -42,14 +139,12 @@ def plan_amount(plan, billing_cycle):
         else subscription["monthly"]
     )
 
-
 def create_transaction_reference(organization_id):
     return (
         f"fleet-{organization_id}-"
         f"{timezone.now().strftime('%Y%m%d%H%M%S')}-"
         f"{secrets.token_urlsafe(8)}"
     )
-
 
 def create_flutterwave_checkout(
     *,
@@ -240,6 +335,11 @@ def activate_subscription_for_payment(payment):
             pk=payment.subscription_id
         )
     )
+    previous_plan = subscription.plan
+
+    previous_billing_cycle = subscription.billing_cycle
+    previous_status = subscription.status
+    previous_expires_at = subscription.expires_at
 
     organization = payment.organization
 
@@ -275,6 +375,25 @@ def activate_subscription_for_payment(payment):
             "status",
             "expires_at",
         ]
+    )
+
+    if previous_plan == "free" and subscription.plan != "free":
+        event = "subscription.activated"
+    elif previous_plan != subscription.plan:
+        event = "subscription.plan_changed"
+    else:
+        event = "subscription.changed"
+
+    log_audit_event(
+        event=event,
+        success=True,
+        request=getattr(payment, "_request", None),
+        user_id=payment.organization.owner_id,
+        organization_id=payment.organization_id,
+        subscription_id=subscription.id,
+        payment_id=payment.id,
+        previous_plan=previous_plan,
+        new_plan=subscription.plan,
     )
 
     if payment.subscription_id != subscription.id:
@@ -471,7 +590,6 @@ def subscription_period(billing_cycle):
         return timedelta(days=365)
 
     return timedelta(days=30)
-
 
 def extend_subscription(subscription, billing_cycle):
     current = subscription.expires_at
